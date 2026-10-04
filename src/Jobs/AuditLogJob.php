@@ -1,0 +1,72 @@
+<?php
+
+namespace Mylekha\RecordApi\Jobs;
+
+use Exception;
+use Mylekha\RecordApi\Enums\AuditLogEventEnum;
+use Mylekha\RecordApi\Services\AuditLogService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+
+class AuditLogJob implements ShouldQueue
+{
+    use Dispatchable;
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
+
+    /**
+     * The number of times the job may be attempted.
+     */
+    public int $tries = 3;
+
+    /**
+     * The maximum number of seconds the job can run.
+     */
+    public int $timeout = 60;
+
+    /**
+     * Create a new job instance.
+     */
+    public function __construct(
+        public AuditLogEventEnum $event,
+        public string $entityName,
+        public ?string $entityType = null,
+        public ?array $queryData = null,
+        public ?string $subject = null,
+        public ?string $recap = null,
+        public mixed $tenantId = null,
+    ) {}
+
+    /**
+     * Execute the job.
+     */
+    public function handle(): void
+    {
+        try {
+            AuditLogService::handleAuditDataEntry(
+                event: $this->event,
+                entityName: $this->entityName,
+                entityType: $this->entityType,
+                queryData: $this->queryData,
+                subject: $this->subject,
+                recap: $this->recap,
+                tenantId: $this->tenantId,
+            );
+        } catch (Exception $exception) {
+            Log::error('record-api - Failed to process audit log job', [
+                'error' => $exception->getMessage(),
+                'entity_name' => $this->entityName,
+                'query_data' => $this->queryData,
+                'trace' => $exception->getTraceAsString(),
+            ]);
+
+            // Re-throw the exception to trigger job retry mechanism
+            throw $exception;
+        }
+    }
+}

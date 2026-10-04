@@ -1,0 +1,15 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Keep dev-only files out of `composer install` dist archives
+/.github            export-ignore
+/docs               export-ignore
+/examples           export-ignore
+/tests              export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/phpunit.xml        export-ignore
+/rector.php         export-ignore
+/AGENT.md           export-ignore
+/CONTRIBUTING.md    export-ignore

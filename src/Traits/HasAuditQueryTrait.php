@@ -1,0 +1,150 @@
+<?php
+
+namespace Mylekha\RecordApi\Traits;
+
+use BadMethodCallException;
+use Illuminate\Support\Collection;
+use Exception;
+use Mylekha\RecordApi\Services\AuditLogService;
+use Mylekha\RecordApi\Enums\AuditLogEventEnum;
+use Illuminate\Http\JsonResponse;
+use Mylekha\RecordApi\Enums\RecordApiJsonResponseEnum;
+use Mylekha\RecordApi\Constants\HttpErrorCodeConstant;
+use Mylekha\RecordApi\Services\RecordConfigService;
+use Mylekha\RecordApi\Utilities\RecordUtils;
+
+/**
+ * Trait for controllers that expose audit query endpoints.
+ *
+ * Provides shared helpers for resolving audit entity metadata, building
+ * audit payloads from custom queries, and returning audit log responses.
+ */
+trait HasAuditQueryTrait
+{
+    protected function resolveAuditEntityClass(): string
+    {
+        if (method_exists($this, 'getAuditEntityClass')) {
+            return $this->getAuditEntityClass();
+        }
+
+        if (property_exists($this, 'modelClass') && is_string($this->modelClass)) {
+            return $this->modelClass;
+        }
+
+        // Try to guess from controller name
+        $className = class_basename($this);
+        $modelName = str_replace('Controller', '', $className);
+        if (class_exists('App\Models\\' . $modelName)) {
+            return 'App\Models\\' . $modelName;
+        }
+
+        throw new BadMethodCallException('Controller must implement getAuditEntityClass method or define $modelClass property');
+    }
+
+    protected function resolveAuditEntityName(): string
+    {
+        if (method_exists($this, 'getAuditEntityName')) {
+            return $this->getAuditEntityName();
+        }
+
+        try {
+            $entityClass = $this->resolveAuditEntityClass();
+            return AuditLogService::getTableNameFromEntityType($entityClass);
+        } catch (Exception) {
+            // Fallback to guessing from controller name
+            $className = class_basename($this);
+            return strtolower(str_replace('Controller', '', $className));
+        }
+    }
+
+    protected function resolveTenantIdFromRequest(): ?string
+    {
+        if (!RecordConfigService::enableTenantId()) {
+            return null;
+        }
+
+        $tenantId = RecordUtils::resolveTenantIdFromRequest(request());
+        if (RecordUtils::isTenantIdMissing($tenantId)) {
+            return null;
+        }
+
+        return (string) $tenantId;
+    }
+
+    /**
+     * Log an audit event using a controller-defined audit query.
+     *
+     * @param int $id The record identifier.
+     * @param AuditLogEventEnum $auditLogEventEnum The audit event type.
+     * @param string|null $subject Optional subject for the log entry.
+     * @param string|null $recap Optional recap text for the log entry.
+     */
+    protected function logAuditWithCustomQuery(
+        int $id,
+        AuditLogEventEnum $auditLogEventEnum,
+        ?string $subject = null,
+        ?string $recap = null
+    ): void {
+        if (!method_exists($this, 'getAuditQuery')) {
+            throw new BadMethodCallException('Controller must implement getAuditQuery method');
+        }
+
+        $queryData = $this->getAuditQuery($id);
+        $entityName = $this->resolveAuditEntityName();
+        $entityClass = $this->resolveAuditEntityClass();
+        $entityType = AuditLogService::getTableNameFromEntityType($entityClass);
+        $tenantColumn = RecordConfigService::tenantColumn();
+        $tenantId = is_array($queryData) ? ($queryData[$tenantColumn] ?? null) : null;
+        $tenantId ??= $this->resolveTenantIdFromRequest();
+
+        AuditLogService::handleAuditDataEntry(
+            event: $auditLogEventEnum,
+            entityName: $entityName,
+            entityType: $entityType,
+            queryData: $queryData,
+            subject: $subject,
+            recap: $recap,
+            tenantId: $tenantId
+        );
+    }
+
+    /**
+     * Retrieve audit logs for a specific record.
+     *
+     * @param int $id The record identifier.
+     * @param int $limit Maximum number of logs to retrieve.
+     */
+    protected function getAuditLogsForRecord(int $id, int $limit = 50): Collection
+    {
+        $entityClass = $this->resolveAuditEntityClass();
+        $entityType = AuditLogService::getTableNameFromEntityType($entityClass);
+        $tenantId = $this->resolveTenantIdFromRequest();
+
+        return AuditLogService::getEntityAuditLogs(entityType: $entityType, entityId: $id, tenantId: $tenantId, limit: $limit);
+    }
+
+    /**
+     * API endpoint for returning audit logs for a record.
+     *
+     * @param int $id The record identifier.
+     */
+    public function auditLogs(int $id): JsonResponse
+    {
+        try {
+            $logs = $this->getAuditLogsForRecord($id);
+
+            return response()->json([
+                'success' => true,
+                'error_code' => HttpErrorCodeConstant::SUCCESS,
+                'data' => $logs,
+                'message' => 'Audit logs retrieved successfully'
+            ]);
+        } catch (Exception $exception) {
+            return response()->json([
+                'success' => false,
+                'error_code' => HttpErrorCodeConstant::INTERNAL_SERVER_ERROR,
+                'message' => 'Failed to retrieve audit logs: ' . $exception->getMessage()
+            ], RecordApiJsonResponseEnum::SERVER_ERROR->value);
+        }
+    }
+}

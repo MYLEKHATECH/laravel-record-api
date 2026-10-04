@@ -1,0 +1,76 @@
+{
+  "name": "mylekha/record-api",
+  "description": "Config-driven generic CRUD API engine for Laravel: list/fetch/create/update/delete/restore, filters, relations, tenancy, permissions and RPC functions from per-table configs.",
+  "keywords": [
+    "laravel",
+    "crud",
+    "api",
+    "rest",
+    "multi-tenant",
+    "record-api"
+  ],
+  "homepage": "https://github.com/MYLEKHATECH/laravel-record-api",
+  "support": {
+    "issues": "https://github.com/MYLEKHATECH/laravel-record-api/issues",
+    "source": "https://github.com/MYLEKHATECH/laravel-record-api"
+  },
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.2|^8.3|^8.4",
+    "laravel/framework": "^12.0",
+    "nesbot/carbon": "^2.0|^3.0"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.92",
+    "larastan/larastan": "^3.0",
+    "phpstan/phpstan": "2.1.32",
+    "orchestra/testbench": "^10.0",
+    "phpunit/phpunit": "^10.0|^11.0",
+    "rector/rector": "^2.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Mylekha\\RecordApi\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Mylekha\\RecordApi\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "vendor/bin/phpunit",
+    "test-coverage": "vendor/bin/phpunit --coverage-html coverage",
+    "analyse": "vendor/bin/phpstan analyse src tests",
+    "format": "@rector:fix",
+    "format-check": "@rector:check",
+    "rector": "vendor/bin/rector process --dry-run",
+    "rector:fix": "vendor/bin/rector process",
+    "rector:check": "vendor/bin/rector process --dry-run --no-progress-bar",
+    "quality": [
+      "@format-check",
+      "@analyse",
+      "@test"
+    ]
+  },
+  "suggest": {
+    "php-open-source-saver/jwt-auth": "Add JWT-based API authentication support",
+    "spatie/laravel-permission": "Add role/permission management integration"
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Mylekha\\RecordApi\\RecordApiServiceProvider"
+      ]
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "config": {
+    "sort-packages": true,
+    "allow-plugins": {
+      "php-http/discovery": true
+    }
+  }
+}

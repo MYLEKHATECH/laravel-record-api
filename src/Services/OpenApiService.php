@@ -1,0 +1,1802 @@
+<?php
+
+namespace Mylekha\RecordApi\Services;
+
+use Mylekha\RecordApi\Interfaces\RecordFunctionInterface;
+use Mylekha\RecordApi\Types\RecordFunctionType;
+use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
+use Mylekha\RecordApi\Utilities\RelationshipResolverUtils;
+use Mylekha\RecordApi\Constants\HttpErrorCodeConstant;
+use Illuminate\Support\Arr;
+
+class OpenApiService
+{
+    /**
+     * Load OpenAPI 3.0 specification dynamically from current configuration.
+     *
+     * @return array The OpenAPI specification
+     */
+    public static function load(): array
+    {
+        return self::generateInternal();
+    }
+
+    public static function generateLlmMdx(): string
+    {
+        $apiPrefix = trim(RecordConfigService::apiPrefix(), '/');
+        $rpcPrefix = trim(RecordConfigService::rpcPrefix(), '/');
+        $tenantHeader = RecordConfigService::tenantHeader();
+        $tenantColumn = RecordConfigService::tenantColumn();
+        $baseUrl = rtrim((string) config('app.url'), '/');
+
+        $openApiPath = '/' . $apiPrefix . '/docs/openapi.json';
+        $openApiUrl = $baseUrl !== '' ? $baseUrl . $openApiPath : $openApiPath;
+
+        $globalRpcPattern = $rpcPrefix === ''
+            ? '/' . $apiPrefix . '/{functionName}'
+            : '/' . $apiPrefix . '/' . $rpcPrefix . '/{functionName}';
+
+        $tableRpcPattern = $rpcPrefix === ''
+            ? '/' . $apiPrefix . '/{table}/{functionName}'
+            : '/' . $apiPrefix . '/{table}/' . $rpcPrefix . '/{functionName}';
+
+        $tableCount = count(RecordConfigService::getTableConfig());
+        $globalFunctionCount = count(RecordConfigService::globalFunctions());
+
+        return <<<MDX
+# SP Laravel API Agent Contract
+
+This API is private/internal. Prefer OpenAPI as the source of truth.
+
+## OpenAPI
+
+- Schema URL: {$openApiUrl}
+- Content-Type: application/vnd.oai.openapi+json
+- Auth: Bearer token
+- Tenant header: {$tenantHeader} (maps to {$tenantColumn})
+
+## Key Notes
+
+- OpenAPI schema is the only source of truth for modules, fields, and relationships.
+- Do not duplicate or hardcode relationship details from this MDX document.
+- Read relationship metadata from `paths` + `components.schemas` in OpenAPI.
+- If OpenAPI and any prose differ, always follow OpenAPI.
+
+## Endpoint Patterns
+
+- List: /{$apiPrefix}/{table}
+- Detail: /{$apiPrefix}/{table}/{id}
+- Create: POST /{$apiPrefix}/{table}
+- Update: PUT|PATCH /{$apiPrefix}/{table}/{id}
+- Delete: DELETE /{$apiPrefix}/{table}/{id}
+- Global RPC: {$globalRpcPattern}
+- Table RPC: {$tableRpcPattern}
+
+## Runtime Snapshot
+
+- Configured tables: {$tableCount}
+- Configured global functions: {$globalFunctionCount}
+
+## Agent Rules
+
+- Do not invent fields or endpoints.
+- Generate frontend types and API clients from OpenAPI schema URL.
+- Use error_code and message from API responses for UI handling.
+- Respect tenant header and auth on every request.
+MDX;
+    }
+
+    /**
+     * Generate OpenAPI 3.0 specification dynamically from runtime configuration.
+     *
+     * @return array The generated OpenAPI specification
+     */
+    public static function generateInternal(): array
+    {
+        $tables = SchemaRegistryUtils::get();
+        $apiPrefix = RecordConfigService::apiPrefix();
+        $tenantHeader = RecordConfigService::tenantHeader();
+        $tenantColumn = RecordConfigService::tenantColumn();
+
+        $schemas = [];
+        foreach ($tables as $recordName => $config) {
+            $columns = $config->columns ?? [];
+            $actualTableName = $config->table ?? $recordName; // Use actual table name from config
+
+            // Full schema (for responses)
+            $schemas[self::schemaName($recordName)] = self::tableSchema($actualTableName, $columns);
+
+            // Read schema (for GET operations - exclude created_at, updated_at)
+            $schemas[self::schemaName($recordName) . 'Read'] = self::tableSchemaRead($actualTableName, $columns);
+
+            // Write schema (for POST/PUT/PATCH operations - exclude created_at, updated_at, deleted_at)
+            $schemas[self::schemaName($recordName) . 'Write'] = self::tableSchemaWrite($actualTableName, $columns);
+        }
+
+        $paths = self::paths($tables);
+
+        $servers = [
+            [
+                'url' => rtrim((string) config('app.url'), '/'),
+                'description' => 'Primary API server (Internal)',
+            ],
+        ];
+
+        $securitySchemes = [
+            'bearerAuth' => [
+                'type' => 'http',
+                'scheme' => 'bearer',
+                'bearerFormat' => 'JWT',
+                'description' => 'Use `Authorization: Bearer <token>` - Internal team access only',
+            ],
+        ];
+
+        $globalFunctions = RecordConfigService::globalFunctions();
+
+        return [
+            'openapi' => '3.0.3',
+            'info' => [
+                'title' => config('app.name') . ' - Internal Documentation',
+                'version' => '2.0.0',
+                'description' => '# API Documentation
+
+A powerful, flexible API for accessing system data with advanced filtering, relationships, and performance optimizations.
+
+## 📋 What This API Does
+
+This API provides **unified access** to all tables through a single endpoint pattern:
+- **CRUD Operations**: Create, read, update, delete records
+- **Dynamic Filtering**: Extended operator set with grouped logical expressions  
+- **Relationship Embedding**: Load related data in a single request
+- **Bulk Operations**: Process multiple records efficiently
+- **Custom Functions**: Execute business logic via RPC endpoints
+
+## 🔑 Authentication
+
+All endpoints require a valid API token in the `Authorization` header:
+```
+Authorization: Bearer <your-api-token>
+```
+
+## Error Code
+
+Every API response includes an integer `error_code` that provides a stable, machine-readable error identifier.
+
+Common values:
+- `0` (**SUCCESS**) – Request processed successfully.
+- `10000` (**GENERAL_ERROR**) – Unclassified error when no more specific code applies.
+- `10001` (**INVALID_TENANT_ID**) – Tenant header is missing or invalid.
+- `10002` (**INVALID_ACCESS**) – Authentication failed or access token is invalid.
+- `10003` (**INVALID_TOKEN**) – Token is malformed, expired, or not accepted.
+- `10004` (**INVALID_REQUEST**) – Request payload or parameters are invalid (validation errors).
+- `10005` (**INVALID_RESOURCE**) – The requested resource identifier is invalid.
+- `10006` (**INVALID_PERMISSION**) – User lacks the required permission scope.
+- `10007` (**INVALID_CREDENTIAL**) – Provided credentials are incorrect.
+- `10008` (**PERMISSION_DENIED**) – Authenticated but not allowed to perform this operation.
+- `10009` (**RESOURCE_NOT_FOUND**) – Entity or endpoint not found.
+- `10010` (**INTERNAL_SERVER_ERROR**) – Unexpected server-side error.
+- `10011` (**UNKNOWN_ERROR**) – Error cause cannot be determined.
+- `10012` (**TENANT_NOT_FOUND**) – Tenant does not exist.
+- `10013` (**TENANT_DISABLED**) – Tenant is disabled.
+- `10014` (**NO_TENANT_PMS_ACCESS**) – Tenant has no PMS access for this operation.
+
+Clients should always branch on `error_code` instead of parsing the human-readable `message`.
+
+## 🔒 Error Handling
+
+All API responses follow this structure:
+```json
+{
+    "success": true,
+    "error_code": 0,
+    "data": {},
+    "meta": {
+        "request_id": "f9c4d1e2-9b0c-4f8a-9b8a-123456789abc"
+    }
+}
+```
+
+On error, the structure is:
+```json
+{
+    "success": false,
+    "error_code": 10009,
+    "message": "Resource not found",
+    "errors": [],
+    "meta": {
+        "request_id": "f9c4d1e2-9b0c-4f8a-9b8a-123456789abc"
+    }
+}
+```
+
+## 🚀 Getting Started
+
+### Basic Usage
+```bash
+# Get all paid invoices
+GET /' . $apiPrefix . '/invoices?status=eq.PAID
+
+# Search customers by name
+GET /' . $apiPrefix . '/customers?name=like.John
+
+# Get products in price range
+GET /' . $apiPrefix . '/products?price=between.100,1000
+```
+
+### Documentation References
+- Interactive package docs: https://sp-laravel-api-docs.vercel.app/#/
+- Runtime OpenAPI JSON: /' . $apiPrefix . '/docs/openapi.json
+- Runtime API docs UI: /' . $apiPrefix . '/docs
+- Full Markdown guide: docs/api-documentation.md
+
+### Load Related Data
+```bash
+# Get invoices with customer and items
+GET /' . $apiPrefix . '/invoices?select=id,ref_number,customer:customers(id,name),items(*)
+
+# Get users with their roles
+GET /' . $apiPrefix . '/users?select=id,name,roles(id,name)
+```
+
+## 🏢 Multi-Tenant Header
+
+If multi-tenant mode is enabled (`record.enable_tenant_id=true`) and the table is configured with `hasTenantId=true`, include the tenant header on requests:
+```bash
+' . $tenantHeader . ': <tenant-id>
+```
+Records are filtered by the `' . $tenantColumn . '` column.
+
+## 🧩 Middleware Map (Public / Auth / Subscription)
+
+You can configure route middleware stacks per action and per table in `config/record.php` using `middleware_map`.
+
+```php
+"middleware_map" => [
+  "default" => [
+    "read" => [],
+    "write" => ["auth:sanctum"],
+  ],
+  "tables" => [
+    "customers" => ["read" => []],
+    "bills" => ["write" => ["auth:sanctum", "subscribed"]],
+  ],
+]
+```
+
+## 🔧 Key Features
+
+### Filtering & Search
+- **Equality**: `eq` (equal), `neq` (not equal)
+- **Text Search**: `like`/`contains` (contains), `ilike`, `starts_with`, `ends_with`, `not_like`, `regex`, `match`, `imatch`
+- **Comparisons**: `gt` (greater than), `lt` (less than), `gte` (greater/equal), `lte` (less/equal)
+- **Lists**: `in` (value in list), `not_in` (value not in list), `between`, `not_between`
+- **Date Filters**: `date_eq`, `date_gt`, `date_lt`, `date_gte`, `date_lte`
+- **Null Checks**: `is` (is null), `is_not` (is not null), `empty` (null or empty), `not_empty`
+- **Advanced**: `not.<operator>` syntax, `any/all` modifiers (example: `name=like(any).{ACME,SHOP}`), grouped logic `and=(...)` and `or=(...)`
+- **Postgres Native**: `fts`, `plfts`, `phfts`, `wfts`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxl`, `nxr`, `adj`
+- **Compatibility**: If an operator is not supported by the current database driver, API returns a validation error
+
+### Grouped Logic Examples
+- `vendor_id=eq.27&or=(balance_due.gt.0,id.eq.5)`
+- `vendor_id=eq.27&and=(or(balance_due.gt.0,id.eq.5),id.neq.2)`
+- `id=in.(5,6,9)` and legacy `id=in.5,6,9` are both supported
+
+### Column Selection
+- **Basic**: `select=id,name,email` (specific columns)
+- **All Columns**: `select=*` (all table columns)
+- **Relationships**: `select=id,name,customer:customers(id,name)` (include related data)
+- **Nested**: `select=id,items(id,name,product:products(*))` (deep relationships)
+- **Mixed**: `select=*,customer:customers(id,name),items(*)` (combine table and relationship columns)
+
+<h3 id="relationship-write-payload-guide">Relationship Write Payload Guide</h3>
+
+This section describes payload format for write endpoints (`POST`, `PUT`, `PATCH`) based on `RecordRelationshipsEnum`.
+
+| Enum Type | Payload Support | Payload Shape |
+|---|---|---|
+| `BELONGS_TO` | ✅ FK scalar only | `customer_id: 10` |
+| `HAS_MANY` | ✅ alias array | `items: [1, {"id": 2}, {"name": "Line A"}]` |
+| `BELONGS_TO_MANY` | ✅ alias array | `roles: [1, {"id": 2}]` |
+| `HAS_MANY_THROUGH` | ✅ alias array | `tasks: [3, {"id": 4}]` |
+| `MORPH_MANY` | ✅ alias array | `comments: [1, {"id": 2}]` |
+| `MORPH_TO_MANY` | ✅ alias array | `roles: [1, {"id": 2}]` |
+| `MORPH_BY_MANY` | ✅ alias array | `tags: [1, {"id": 2}]` |
+| `SPATIE_PERMISSION` | ✅ alias array | `roles: [1, {"id": 2}]` |
+| `HAS_ONE` | ⚠️ schema-dependent | Prefer scalar FK-style field |
+| `HAS_ONE_THROUGH` | ⚠️ not direct alias write | Use main table fields or custom function |
+| `MORPH_TO` | ⚠️ morph columns | `commentable_type`, `commentable_id` |
+| `MORPH_ONE` | ⚠️ schema-dependent | Prefer scalar FK-style field |
+
+**Write payload examples**
+```json
+{
+  "customer_id": 10,
+  "items": [
+    1,
+    {"id": 2},
+    {"name": "Line A", "qty": 1},
+    {"id": 5, "_delete": true}
+  ],
+  "roles": [1, {"id": 2}]
+}
+```
+
+Full relationship examples and payload guides: https://sp-laravel-api-docs.vercel.app/#/
+
+### Ordering & Sorting
+- **Basic**: `sortby=name&order=asc` (sort by column)
+- **Direction**: `order=desc` (default) or `order=asc`
+- **Table Qualified**: `sortby=table.column` (explicit table reference)
+- **Default**: Falls back to `id` or first available column if invalid
+- **Validation**: Only allows columns that exist in table schema
+
+### Pagination
+- **Traditional**: `page=1&per_page=25` (offset-based for small datasets)
+- **Cursor-Based**: `cursor=12345&direction=next` (high-performance for large datasets)
+- **Auto-Detection**: Automatically switches to cursor pagination for tables >10,000 rows
+- **Custom Cursor**: `cursor_column=created_at` (use different cursor column)
+- **Composite**: `composite_cursor=true&sortby=created_at` (multi-column cursors)
+- **Limits**: `per_page` max 100, default 25
+
+### Bulk Operations (Available for All Tables)
+
+#### Mixed Operations
+`POST /' . $apiPrefix . '/{table}/bulk` - Create, update, delete in one request. Operations are auto-detected based on payload structure.
+
+**Request Payload:**
+Accepts a JSON array of objects directly or wrapped in `{"items": [...]}`.
+
+- **Create**: Object without primary key (e.g., `id`).
+- **Update**: Object with primary key and other fields.
+- **Delete**: Object with only primary key.
+
+**Option 1: Direct Array**
+```json
+[
+  {"name": "New Customer", "email": "new@example.com"},           // Create (No ID)
+  {"id": "123", "name": "Updated Name", "status": "active"},      // Update (ID + fields)
+  {"id": "789"}                                                   // Delete (Only ID)
+]
+```
+
+**Option 2: Wrapped in Items**
+```json
+{
+  "items": [
+    {"name": "New Customer"},
+    {"id": "123", "status": "active"}
+  ]
+}
+```
+
+**Response:**
+Returns consolidated list of created and updated records in `data`. Deleted records are not returned.
+`meta.affected` contains the total count of processed records.
+
+#### Bulk Create
+`POST /' . $apiPrefix . '/{table}/bulk/create` - Create multiple records
+Primary keys (e.g., `id`) must NOT be provided.
+
+```json
+[
+  {"name": "Product A", "price": 99.99, "category": "electronics"},
+  {"name": "Product B", "price": 149.99, "category": "electronics"}
+]
+```
+
+#### Bulk Update
+`POST /' . $apiPrefix . '/{table}/bulk/update` - Update multiple records
+Primary key is **REQUIRED** for each item. At least one field to update must be provided.
+
+```json
+[
+  {"id": "123", "price": 89.99},
+  {"id": "456", "status": "discontinued"}
+]
+```
+
+#### Bulk Delete
+`POST /' . $apiPrefix . '/{table}/bulk/delete` - Delete multiple records
+Accepts an array of IDs or an array of objects with the primary key.
+
+**Option 1: Array of IDs**
+```json
+["record-id-1", "record-id-2", "record-id-3"]
+```
+
+**Option 2: Array of Objects**
+```json
+[
+  {"id": "record-id-1"},
+  {"id": "record-id-2"}
+]
+```
+
+### Performance Optimization
+- **Lazy Loading**: `lazy=true` for complex queries
+- **Smart Caching**: Automatic request caching
+- **Cursor Pagination**: Efficient for large datasets
+- **Query Optimization**: Operations prioritized by speed
+
+## 🎯 Quick Tips
+
+- Use `select` to limit returned columns for better performance
+- Add `lazy=true` for complex queries with multiple filters
+- Embed relationships instead of making separate API calls
+- Use cursor pagination (`cursor`) for large datasets',
+                'contact' => [
+                    'name' => config('app.name') . ' Development Team',
+                    'email' => config('app.email'),
+                ],
+                'license' => [
+                    'name' => 'Proprietary - Internal Use Only',
+                ],
+            ],
+            'servers' => $servers,
+            'tags' => self::tags($tables, $globalFunctions),
+            'paths' => $paths + self::rpcPaths($tables, $globalFunctions),
+            'components' => [
+                'schemas' => $schemas,
+                'securitySchemes' => $securitySchemes,
+            ],
+            'security' => [['bearerAuth' => []]],
+        ];
+    }
+
+    private static function schemaName(string $table): string
+    {
+        return str_replace(['-', ' '], '_', ucwords(strtolower($table)));
+    }
+
+    private static function tableSchema(string $table, array $columns): array
+    {
+        $properties = [];
+        $required = [];
+
+        // Exclude deleted_at from all response schemas
+        $excludeFields = ['deleted_at'];
+
+        foreach ($columns as $name => $info) {
+            if (in_array($name, $excludeFields, true)) {
+                continue;
+            }
+
+            $mapped = self::mapColumnToOpenApi($info['type'] ?? 'string');
+            $properties[$name] = $mapped;
+            // Avoid forcing typical system fields as required
+            if (!(bool) ($info['nullable'] ?? true) && !in_array($name, ['id', 'created_at', 'updated_at', 'deleted_at'], true)) {
+                $required[] = $name;
+            }
+        }
+
+        return [
+            'type' => 'object',
+            'properties' => $properties,
+            'required' => $required,
+            'description' => sprintf('Schema for table `%s` (excludes soft delete field)', $table),
+        ];
+    }
+
+    private static function mapColumnToOpenApi(string $dbType): array
+    {
+        $type = strtolower($dbType);
+
+        // Parse enum('a','b')
+        if (str_starts_with($type, 'enum(')) {
+            $values = [];
+            $inside = substr($type, 5, -1); // remove enum( and )
+            foreach (explode(',', $inside) as $raw) {
+                $values[] = trim($raw, "'\"");
+            }
+
+            return ['type' => 'string', 'enum' => $values];
+        }
+
+        // Boolean tinyint(1)
+        if (str_starts_with($type, 'tinyint(1)')) {
+            return ['type' => 'boolean'];
+        }
+
+        // Numeric
+        if (str_starts_with($type, 'int') || str_starts_with($type, 'smallint')) {
+            return ['type' => 'integer', 'format' => 'int32'];
+        }
+
+        if (str_starts_with($type, 'bigint')) {
+            return ['type' => 'integer', 'format' => 'int64'];
+        }
+
+        if (str_starts_with($type, 'decimal') || str_starts_with($type, 'numeric')) {
+            return ['type' => 'number', 'format' => 'decimal'];
+        }
+
+        if (str_starts_with($type, 'double') || str_starts_with($type, 'float')) {
+            return ['type' => 'number', 'format' => 'double'];
+        }
+
+        // Date/time
+        if ('date' === $type) {
+            return ['type' => 'string', 'format' => 'date'];
+        }
+
+        if ('datetime' === $type || 'timestamp' === $type) {
+            return ['type' => 'string', 'format' => 'date-time'];
+        }
+
+        // JSON
+        if ('json' === $type) {
+            return ['type' => 'object'];
+        }
+
+        // Default string
+        return ['type' => 'string'];
+    }
+
+    private static function tableSchemaRead(string $table, array $columns): array
+    {
+        $properties = [];
+        $required = [];
+
+        // Exclude created_at, updated_at, and deleted_at for read operations
+        $excludeFields = ['created_at', 'updated_at', 'deleted_at'];
+
+        foreach ($columns as $name => $info) {
+            if (in_array($name, $excludeFields, true)) {
+                continue;
+            }
+
+            $mapped = self::mapColumnToOpenApi($info['type'] ?? 'string');
+            $properties[$name] = $mapped;
+            // Avoid forcing typical system fields as required
+            if (!(bool) ($info['nullable'] ?? true) && !in_array($name, ['id', 'created_at', 'updated_at', 'deleted_at'], true)) {
+                $required[] = $name;
+            }
+        }
+
+        return [
+            'type' => 'object',
+            'properties' => $properties,
+            'required' => $required,
+            'description' => sprintf('Read schema for table `%s` (excludes system timestamps and soft delete)', $table),
+        ];
+    }
+
+    private static function tableSchemaWrite(string $table, array $columns): array
+    {
+        $properties = [];
+        $required = [];
+
+        // Exclude created_at, updated_at, and deleted_at for write operations
+        $excludeFields = ['created_at', 'updated_at', 'deleted_at'];
+
+        foreach ($columns as $name => $info) {
+            if (in_array($name, $excludeFields, true)) {
+                continue;
+            }
+
+            $mapped = self::mapColumnToOpenApi($info['type'] ?? 'string');
+            $properties[$name] = $mapped;
+            // Avoid forcing typical system fields as required
+            if (!(bool) ($info['nullable'] ?? true) && !in_array($name, ['id', 'created_at', 'updated_at', 'deleted_at'], true)) {
+                $required[] = $name;
+            }
+        }
+
+        return [
+            'type' => 'object',
+            'properties' => $properties,
+            'required' => $required,
+            'description' => sprintf('Write schema for table `%s` (excludes system-managed fields)', $table),
+        ];
+    }
+
+    private static function tags(array $tables, array $globalFunctions): array
+    {
+        $tags = [];
+        foreach (array_keys($tables) as $table) {
+            $formattedTableName = ucwords(str_replace('_', ' ', $table));
+            $tags[] = ['name' => $formattedTableName, 'description' => sprintf('Operations for `%s` records', $formattedTableName)];
+        }
+
+        $tags[] = ['name' => 'RPC', 'description' => 'Global RPC functions'];
+
+        $rpcGroups = [];
+        foreach (array_keys($globalFunctions) as $functionName) {
+            if (!is_string($functionName)) {
+                continue;
+            }
+
+            if ($functionName === '') {
+                continue;
+            }
+
+            $segments = explode('/', trim($functionName, '/'));
+            $group = $segments[0] ?? '';
+            if ($group !== '' && $group !== $functionName) {
+                $rpcGroups[$group] = true;
+            }
+        }
+
+        foreach (array_keys($rpcGroups) as $group) {
+            $formatted = ucwords(str_replace('_', ' ', $group));
+            $tags[] = ['name' => 'RPC - ' . $formatted, 'description' => sprintf('Global RPC functions under `%s/*`', $group)];
+        }
+
+        if (RecordConfigService::auditEnabled()) {
+            $tags[] = ['name' => 'Audit', 'description' => 'Audit log operations'];
+        }
+
+        return $tags;
+    }
+
+    private static function paths(array $tables): array
+    {
+        $apiPrefix = RecordConfigService::apiPrefix();
+        $paths = [];
+
+        foreach ($tables as $recordName => $config) {
+            $actualTableName = $config->table ?? $recordName; // Use actual table name from config
+            $formattedRecordName = ucwords(str_replace('_', ' ', $recordName));
+            $formattedTableName = ucwords(str_replace('_', ' ', $actualTableName));
+            $schemaRef = '#/components/schemas/' . self::schemaName($recordName);
+            $schemaRefRead = '#/components/schemas/' . self::schemaName($recordName) . 'Read';
+            $schemaRefWrite = '#/components/schemas/' . self::schemaName($recordName) . 'Write';
+            $tenantHeaderParameters = self::tenantHeaderParametersForTableConfig($config);
+            $canRead = (bool) ($config->canRead ?? true);
+            $canCreate = (bool) ($config->canCreate ?? true);
+            $canUpdate = (bool) ($config->canUpdate ?? true);
+            $canDelete = (bool) ($config->canDelete ?? true);
+            $canUpsert = (bool) ($config->canUpsert ?? true);
+
+            // Generate relationship description
+            $relationshipDescription = self::generateRelationshipDescription($recordName, $config);
+
+            // List & create (API endpoints use record name, but descriptions reference actual table)
+            $basePath = '/' . $apiPrefix . '/' . $recordName;
+            $paths[$basePath] = array_filter([
+                'parameters' => $tenantHeaderParameters,
+                'get' => $canRead ? [
+                    'tags' => [$formattedRecordName],
+                    'summary' => 'List ' . $formattedRecordName,
+                    'description' => "Retrieve {$recordName} records with comprehensive query capabilities:\n\n**Advanced Filtering:** Multiple operators ([Filter](#description/-getting-started))\n\n{$relationshipDescription}",
+                    'responses' => [
+                        '200' => [
+                            'description' => 'Successful response',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => true],
+                                            'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::SUCCESS],
+                                            'data' => [
+                                                'type' => 'array',
+                                                'items' => ['$ref' => $schemaRefRead],
+                                            ],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                    'total' => ['type' => 'integer'],
+                                                    'per_page' => ['type' => 'integer'],
+                                                    'current_page' => ['type' => 'integer'],
+                                                    'last_page' => ['type' => 'integer'],
+                                                    'from' => ['type' => 'integer'],
+                                                    'to' => ['type' => 'integer'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'error_code', 'data', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ] : [],
+                'post' => $canCreate ? [
+                    'tags' => [$formattedRecordName],
+                    'summary' => 'Create ' . $recordName,
+                    'description' => "Create a new {$recordName} record with comprehensive validation:\n\n**Advanced Validation:** Multiple rules ([Validation](#description/-getting-started))\n\n{$relationshipDescription}",
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => ['$ref' => $schemaRefWrite],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '201' => [
+                            'description' => 'Created',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => true],
+                                            'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::SUCCESS],
+                                            'data' => ['$ref' => $schemaRef],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'error_code', 'data', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ] : [],
+            ], static fn(mixed $value): bool => [] !== $value);
+
+            if (!isset($paths[$basePath]['get']) && !isset($paths[$basePath]['post'])) {
+                unset($paths[$basePath]);
+            }
+
+            // Upsert
+            if ($canUpsert) {
+                $upsertPath = $basePath . '/upsert';
+                $paths[$upsertPath] = [
+                    'parameters' => array_merge($tenantHeaderParameters, [
+                        [
+                            'name' => 'match_on',
+                            'in' => 'query',
+                            'required' => true,
+                            'description' => 'Comma-separated list of columns to use for matching records (e.g. "sku,name")',
+                            'schema' => ['type' => 'string'],
+                        ],
+                    ]),
+                    'post' => [
+                        'tags' => [$formattedRecordName],
+                        'summary' => 'Upsert ' . $formattedRecordName,
+                        'description' => "Create or update a {$recordName} record based on match_on columns.\n\n{$relationshipDescription}",
+                        'requestBody' => [
+                            'required' => true,
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => ['$ref' => $schemaRefWrite],
+                                ],
+                            ],
+                        ],
+                        'responses' => [
+                            '200' => [
+                                'description' => 'Upserted',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => true],
+                                                'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::SUCCESS],
+                                                'data' => ['$ref' => $schemaRef],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'error_code', 'data', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '400' => [
+                                'description' => 'Validation Error',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::INVALID_REQUEST],
+                                                'message' => ['type' => 'string', 'example' => 'Validation failed'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'error_code', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'security' => [['bearerAuth' => []]],
+                    ],
+                ];
+
+                // Bulk Upsert
+                $bulkUpsertPath = $basePath . '/bulk/upsert';
+                $paths[$bulkUpsertPath] = [
+                    'parameters' => array_merge($tenantHeaderParameters, [
+                        [
+                            'name' => 'match_on',
+                            'in' => 'query',
+                            'required' => true,
+                            'description' => 'Comma-separated list of columns to use for matching records (e.g. "sku,name")',
+                            'schema' => ['type' => 'string'],
+                        ],
+                    ]),
+                    'post' => [
+                        'tags' => [$formattedRecordName],
+                        'summary' => 'Bulk Upsert ' . $formattedRecordName,
+                        'description' => "Bulk create or update {$recordName} records based on match_on columns.\n\n{$relationshipDescription}",
+                        'requestBody' => [
+                            'required' => true,
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'array',
+                                        'items' => ['$ref' => $schemaRefWrite],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'responses' => [
+                            '200' => [
+                                'description' => 'Bulk Upserted',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => true],
+                                                'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::SUCCESS],
+                                                'data' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'count' => ['type' => 'integer'],
+                                                    ],
+                                                ],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                        'total' => ['type' => 'integer'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'error_code', 'data', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '400' => [
+                                'description' => 'Validation Error',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::INVALID_REQUEST],
+                                                'message' => ['type' => 'string', 'example' => 'Validation failed'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'error_code', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'security' => [['bearerAuth' => []]],
+                    ],
+                ];
+            }
+
+            // Read/Update/Delete
+            $idPath = $basePath . '/{id}';
+            $paths[$idPath] = array_filter([
+                'parameters' => array_merge([self::pathIdParameter()], $tenantHeaderParameters),
+                'get' => $canRead ? [
+                    'tags' => [$formattedRecordName],
+                    'summary' => sprintf('Get %s by ID', $recordName),
+                    'responses' => [
+                        '200' => [
+                            'description' => 'Successful response',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => true],
+                                            'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::SUCCESS],
+                                            'data' => ['$ref' => $schemaRefRead],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'error_code', 'data', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '404' => [
+                            'description' => 'Not Found',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'error_code' => ['type' => 'integer', 'example' => HttpErrorCodeConstant::RESOURCE_NOT_FOUND],
+                                            'message' => ['type' => 'string', 'example' => 'Record not found'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'error_code', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ] : [],
+                'put' => $canUpdate ? [
+                    'tags' => [$formattedRecordName],
+                    'summary' => 'Update ' . $formattedRecordName,
+                    'description' => "Update an existing {$recordName} record with comprehensive validation:\n\n**Advanced Validation:** Multiple rules ([Validation](#description/-getting-started))\n\n{$relationshipDescription}",
+                    'requestBody' => [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => ['$ref' => $schemaRefWrite],
+                            ],
+                        ],
+                    ],
+                    'responses' => [
+                        '200' => [
+                            'description' => 'Updated',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => true],
+                                            'data' => ['$ref' => $schemaRef],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'data', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '404' => [
+                            'description' => 'Not Found',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Record not found'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ] : [],
+                'delete' => $canDelete ? [
+                    'tags' => [$formattedRecordName],
+                    'summary' => 'Delete ' . $formattedRecordName,
+                    'responses' => [
+                        '200' => [
+                            'description' => 'Deleted',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => true],
+                                            'data' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'deleted' => ['type' => 'integer', 'example' => 1],
+                                                ],
+                                            ],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'data', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '404' => [
+                            'description' => 'Not Found',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Record not found'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ] : [],
+            ], static fn(mixed $value): bool => [] !== $value);
+
+            $idPathOperations = array_diff_key($paths[$idPath], ['parameters' => true]);
+            if ([] === $idPathOperations) {
+                unset($paths[$idPath]);
+            }
+
+            // Restore
+            if ($canUpdate && (bool) ($config->softDeletes ?? false)) {
+                $paths[$basePath . '/{id}/restore'] = [
+                    'parameters' => [self::pathIdParameter()],
+                    'post' => [
+                        'tags' => [$formattedRecordName],
+                        'summary' => 'Restore ' . $formattedRecordName,
+                        'responses' => [
+                            '200' => [
+                                'description' => 'Restored',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'message' => ['type' => 'string', 'example' => 'Record restored successfully'],
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '404' => [
+                                'description' => 'Not Found',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Record not found'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'security' => [['bearerAuth' => []]],
+                    ],
+                ];
+            }
+
+            // Force Delete
+            if ($canDelete) {
+                $paths[$basePath . '/{id}/force'] = [
+                    'parameters' => [self::pathIdParameter()],
+                    'delete' => [
+                        'tags' => [$formattedRecordName],
+                        'summary' => 'Force delete ' . $formattedRecordName,
+                        'responses' => [
+                            '200' => [
+                                'description' => 'Deleted',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => true],
+                                                'data' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'deleted' => ['type' => 'integer', 'example' => 1],
+                                                    ],
+                                                ],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'data', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '404' => [
+                                'description' => 'Not Found',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'message' => ['type' => 'string', 'example' => 'Record not found'],
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'security' => [['bearerAuth' => []]],
+                    ],
+                ];
+            }
+        }
+
+        return $paths;
+    }
+
+    private static function rpcPaths(array $tables, array $globalFunctions): array
+    {
+        $apiPrefix = RecordConfigService::apiPrefix();
+        $rpcPrefix = RecordConfigService::rpcPrefix();
+        $paths = [];
+
+        // Global RPC Functions - Generate individual endpoints
+        foreach ($globalFunctions as $functionName => $functionConfig) {
+            // Normalize Array Config to Object (for legacy support)
+            if (is_array($functionConfig)) {
+                $functionConfig = (object) $functionConfig;
+            }
+
+            // Resolve Class-Based Config
+            if (is_string($functionConfig) && class_exists($functionConfig)) {
+                $instance = new $functionConfig();
+                if ($instance instanceof RecordFunctionInterface) {
+                    $functionConfig = $instance->toFunctionType();
+                } elseif ($instance instanceof RecordFunctionType) {
+                    $functionConfig = $instance;
+                }
+            }
+
+            $allowedMethods = gettype($functionConfig->httpMethod) === 'string' ? [$functionConfig->httpMethod] : $functionConfig->httpMethod ?? ['GET'];
+            $methodName = empty($functionConfig->description) ? self::schemaName($functionName) : $functionConfig->description;
+            $summary = sprintf('RPC - %s', $methodName);
+            $description = sprintf('%s', $methodName);
+
+            // Get schemas from config
+            $querySchema = $functionConfig->querySchema ?? null;
+            $payloadSchema = $functionConfig->payloadSchema ?? null;
+            $responseSchema = $functionConfig->responseSchema ?? null;
+
+            $endpoint = $rpcPrefix === ''
+                ? '/' . $apiPrefix . '/' . $functionName
+                : '/' . $apiPrefix . '/' . $rpcPrefix . '/' . $functionName;
+            $paths[$endpoint] = [];
+
+            foreach ($allowedMethods as $method) {
+                $methodLower = strtolower((string) $method);
+
+                $rpcTag = 'RPC';
+                $segments = explode('/', trim((string) $functionName, '/'));
+                if (count($segments) > 1 && $segments[0] !== '') {
+                    $rpcTag = 'RPC - ' . ucwords(str_replace('_', ' ', $segments[0]));
+                }
+
+                // Determine response schema
+                $successResponseSchema = [
+                    'type' => 'object',
+                    'properties' => [
+                        'success' => ['type' => 'boolean'],
+                        'data' => ['type' => 'object'],
+                        'meta' => ['type' => 'object'],
+                    ],
+                ];
+
+                if ($responseSchema) {
+                    $successResponseSchema = $responseSchema;
+                }
+
+                $paths[$endpoint][$methodLower] = [
+                    'tags' => [$rpcTag],
+                    'summary' => $summary,
+                    'description' => $description,
+                    'operationId' => 'globalRpc' . ucfirst((string) preg_replace('/[^A-Za-z0-9]/', '', (string) $functionName)) . ucfirst($methodLower),
+                    'responses' => [
+                        '200' => [
+                            'description' => 'Successful response',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => $successResponseSchema,
+                                ],
+                            ],
+                        ],
+                        '400' => [
+                            'description' => 'Bad Request',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Bad request'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '401' => [
+                            'description' => 'Unauthorized',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Unauthorized'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '403' => [
+                            'description' => 'Forbidden',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Forbidden'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '404' => [
+                            'description' => 'Function not found',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Function not found'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        '500' => [
+                            'description' => 'Internal Server Error',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'success' => ['type' => 'boolean', 'example' => false],
+                                            'message' => ['type' => 'string', 'example' => 'Internal server error'],
+                                            'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                            'meta' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'request_id' => ['type' => 'string'],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['success', 'message', 'errors', 'meta'],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'security' => [['bearerAuth' => []]],
+                ];
+
+                // Add request body for POST, PUT, PATCH methods
+                if (in_array($methodLower, ['post', 'put', 'patch'])) {
+                    $bodySchema = [
+                        'type' => 'object',
+                        'description' => 'Function parameters',
+                    ];
+
+                    if ($payloadSchema) {
+                        $bodySchema = $payloadSchema;
+                    }
+
+                    $paths[$endpoint][$methodLower]['requestBody'] = [
+                        'required' => !empty($payloadSchema['required']),
+                        'content' => [
+                            'application/json' => [
+                                'schema' => $bodySchema,
+                            ],
+                        ],
+                    ];
+                }
+
+                // Add query parameters for GET method
+                if ('get' === $methodLower) {
+                    if ($querySchema) {
+                        $paths[$endpoint][$methodLower]['parameters'] = self::schemaToQueryParameters($querySchema);
+                    } else {
+                        $paths[$endpoint][$methodLower]['parameters'] = [
+                            [
+                                'name' => 'params',
+                                'in' => 'query',
+                                'required' => false,
+                                'description' => 'Function parameters as JSON string',
+                                'schema' => ['type' => 'string'],
+                            ],
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Table RPC Functions - Generate individual endpoints
+        foreach ($tables as $tableName => $config) {
+            $formattedTableName = ucwords(str_replace('_', ' ', $tableName));
+            $functions = Arr::get((array) $config, 'functions', []);
+            $tenantHeaderParameters = self::tenantHeaderParametersForTableConfig($config);
+
+            foreach ($functions as $functionName => $functionConfig) {
+                // Normalize Array Config to Object (for legacy support)
+                if (is_array($functionConfig)) {
+                    $functionConfig = (object) $functionConfig;
+                }
+
+                // Resolve Class-Based Config
+                if (is_string($functionConfig) && class_exists($functionConfig)) {
+                    $instance = new $functionConfig();
+                    if ($instance instanceof RecordFunctionInterface) {
+                        $functionConfig = $instance->toFunctionType();
+                    } elseif ($instance instanceof RecordFunctionType) {
+                        $functionConfig = $instance;
+                    }
+                }
+
+                $allowedMethods = gettype($functionConfig->httpMethod) === 'string' ? [$functionConfig->httpMethod] : $functionConfig->httpMethod ?? ['GET'];
+                $methodName = empty($functionConfig->description) ? self::schemaName($functionName) : $functionConfig->description;
+                $summary = sprintf('RPC - %s', $methodName);
+                $description = sprintf('%s', $methodName);
+
+                // Get schemas from config
+                $querySchema = $functionConfig->querySchema ?? null;
+                $payloadSchema = $functionConfig->payloadSchema ?? null;
+                $responseSchema = $functionConfig->responseSchema ?? null;
+
+                // Handle parameterized endpoints like 'update/{id}'
+                $endpoint = $rpcPrefix === ''
+                    ? sprintf('/%s/%s/%s', $apiPrefix, $tableName, $functionName)
+                    : sprintf('/%s/%s/%s/%s', $apiPrefix, $tableName, $rpcPrefix, $functionName);
+                $paths[$endpoint] = [];
+
+                // Check if function name contains parameters
+                $hasParameters = str_contains((string) $functionName, '{');
+                $parameters = [];
+
+                if ($hasParameters) {
+                    // Extract parameters from function name like 'update/{id}'
+                    preg_match_all('/\{([^}]+)\}/', (string) $functionName, $matches);
+                    foreach ($matches[1] as $paramName) {
+                        $parameters[] = [
+                            'name' => $paramName,
+                            'in' => 'path',
+                            'required' => true,
+                            'description' => ucfirst($paramName) . ' parameter',
+                            'schema' => ['type' => 'string'],
+                        ];
+                    }
+                }
+
+                foreach ($allowedMethods as $method) {
+                    $methodLower = strtolower((string) $method);
+                    $operationId = 'tableRpc' . ucfirst((string) $tableName) . ucfirst(str_replace(['{', '}', '/'], '', $functionName)) . ucfirst($methodLower);
+
+                    // Determine response schema
+                    $successResponseSchema = [
+                        'type' => 'object',
+                        'properties' => [
+                            'success' => ['type' => 'boolean'],
+                            'data' => ['type' => 'object'],
+                            'meta' => ['type' => 'object'],
+                        ],
+                    ];
+
+                    if ($responseSchema) {
+                        $successResponseSchema = $responseSchema;
+                    }
+
+                    $paths[$endpoint][$methodLower] = [
+                        'tags' => [$formattedTableName],
+                        'summary' => $summary,
+                        'description' => $description,
+                        'operationId' => $operationId,
+                        'parameters' => $tenantHeaderParameters,
+                        'responses' => [
+                            '200' => [
+                                'description' => 'Successful response',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => $successResponseSchema,
+                                    ],
+                                ],
+                            ],
+                            '400' => [
+                                'description' => 'Bad Request',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Bad request'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '401' => [
+                                'description' => 'Unauthorized',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Unauthorized'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '403' => [
+                                'description' => 'Forbidden',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Forbidden'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '404' => [
+                                'description' => 'Function not found',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Function not found'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            '500' => [
+                                'description' => 'Internal Server Error',
+                                'content' => [
+                                    'application/json' => [
+                                        'schema' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'success' => ['type' => 'boolean', 'example' => false],
+                                                'message' => ['type' => 'string', 'example' => 'Internal server error'],
+                                                'errors' => ['type' => 'array', 'items' => ['type' => 'string']],
+                                                'meta' => [
+                                                    'type' => 'object',
+                                                    'properties' => [
+                                                        'request_id' => ['type' => 'string'],
+                                                    ],
+                                                ],
+                                            ],
+                                            'required' => ['success', 'message', 'errors', 'meta'],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'security' => [['bearerAuth' => []]],
+                    ];
+
+                    // Add path parameters if any
+                    if (!empty($parameters)) {
+                        $paths[$endpoint][$methodLower]['parameters'] = array_merge($paths[$endpoint][$methodLower]['parameters'], $parameters);
+                    }
+
+                    // Add request body for POST, PUT, PATCH methods
+                    if (in_array($methodLower, ['post', 'put', 'patch'])) {
+                        $bodySchema = [
+                            'type' => 'object',
+                            'description' => 'Function parameters',
+                        ];
+
+                        if ($payloadSchema) {
+                            $bodySchema = $payloadSchema;
+                        }
+
+                        $paths[$endpoint][$methodLower]['requestBody'] = [
+                            'required' => !empty($payloadSchema['required']),
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => $bodySchema,
+                                ],
+                            ],
+                        ];
+                    }
+
+                    // Add query parameters for GET method
+                    if ('get' === $methodLower) {
+                        $queryParams = [];
+                        if ($querySchema) {
+                            $queryParams = self::schemaToQueryParameters($querySchema);
+                        } elseif (empty($parameters)) {
+                            // Only add default 'params' if no path parameters and no schema
+                            $queryParams[] = [
+                                'name' => 'params',
+                                'in' => 'query',
+                                'required' => false,
+                                'description' => 'Function parameters as JSON string',
+                                'schema' => ['type' => 'string'],
+                            ];
+                        }
+
+                        if (!empty($queryParams)) {
+                            if (!isset($paths[$endpoint][$methodLower]['parameters'])) {
+                                $paths[$endpoint][$methodLower]['parameters'] = [];
+                            }
+
+                            $paths[$endpoint][$methodLower]['parameters'] = array_merge($paths[$endpoint][$methodLower]['parameters'], $queryParams);
+                        }
+                    }
+                }
+            }
+        }
+
+        return $paths;
+    }
+
+    private static function schemaToQueryParameters(array $schema): array
+    {
+        $parameters = [];
+        $properties = $schema['properties'] ?? [];
+        $required = $schema['required'] ?? [];
+
+        foreach ($properties as $name => $propSchema) {
+            $parameters[] = [
+                'name' => $name,
+                'in' => 'query',
+                'required' => in_array($name, $required, true),
+                'description' => $propSchema['description'] ?? '',
+                'schema' => Arr::except($propSchema, ['description', 'required']),
+            ];
+        }
+
+        return $parameters;
+    }
+
+    private static function pathIdParameter(): array
+    {
+        return [
+            'name' => 'id',
+            'in' => 'path',
+            'required' => true,
+            'schema' => ['type' => 'string'],
+            'description' => 'Record identifier (UUID or string)',
+        ];
+    }
+
+    private static function tenantHeaderParameter(bool $required = true): array
+    {
+        $tenantHeader = RecordConfigService::tenantHeader();
+        $tenantColumn = RecordConfigService::tenantColumn();
+
+        return [
+            'name' => $tenantHeader,
+            'in' => 'header',
+            'required' => $required,
+            'schema' => ['type' => 'string'],
+            'description' => sprintf('Tenant identifier header. Used to filter records by `%s` when multi-tenant mode is enabled.', $tenantColumn),
+        ];
+    }
+
+    private static function tenantHeaderParametersForTableConfig(mixed $config): array
+    {
+        if (!RecordConfigService::enableTenantId()) {
+            return [];
+        }
+
+        if (!($config->hasTenantId ?? false)) {
+            return [];
+        }
+
+        return [self::tenantHeaderParameter(true)];
+    }
+
+    /**
+     * Generate relationship description for API documentation.
+     */
+    private static function generateRelationshipDescription(string $recordName, mixed $config): string
+    {
+        if (empty($config->relationships)) {
+            return '';
+        }
+
+        $lines = [];
+        $arrayPayloadRows = [];
+        $fkRows = [];
+
+        foreach (array_keys($config->relationships) as $alias) {
+            if (!is_string($alias)) {
+                continue;
+            }
+
+            if ('' === $alias) {
+                continue;
+            }
+
+            $resolved = RelationshipResolverUtils::resolveRelationship($recordName, $alias);
+            if (!is_array($resolved)) {
+                continue;
+            }
+
+            $type = (string) ($resolved['type'] ?? 'unknown');
+
+            if ('belongsTo' === $type) {
+                $foreignKey = (string) ($resolved['foreign_key'] ?? (rtrim($alias, 's') . '_id'));
+                $fkRows[] = sprintf('| `%s` | `%s` |', $alias, $foreignKey);
+                continue;
+            }
+
+            if (in_array($type, ['hasMany', 'belongsToMany', 'morphMany', 'morphToMany', 'morphByMany', 'hasManyThrough'], true)) {
+                $arrayPayloadRows[] = sprintf('| `%s` | `%s` | `array<id|object>` |', $alias, $type);
+            }
+        }
+
+        $lines[] = '**Relationship payload guide (write endpoints):**';
+        if ([] !== $arrayPayloadRows) {
+            $lines[] = '**Array relationship keys accepted in payload:**';
+            $lines[] = '| Alias | Type | Payload shape |';
+            $lines[] = '|---|---|---|';
+            $lines = array_merge($lines, $arrayPayloadRows);
+        } else {
+            $lines[] = '- Array relationship keys accepted in payload: _none_';
+        }
+
+        $lines[] = '';
+        if ([] !== $fkRows) {
+            $lines[] = '**FK relationship input (belongsTo):**';
+            $lines[] = '| Relationship alias | Use scalar FK field |';
+            $lines[] = '|---|---|';
+            $lines = array_merge($lines, $fkRows);
+        } else {
+            $lines[] = '- FK relationship input (belongsTo): _none_';
+        }
+
+        $lines[] = '';
+        $lines[] = '**Payload examples:**';
+        $lines[] = '- FK (belongsTo): `{"customer_id": 10}`';
+        $lines[] = '- hasMany: `{"items": [{"name":"Line A"},{"id": 15,"_delete": true}]}`';
+        $lines[] = '- belongsToMany/morphToMany: `{"roles": [1, {"id": 2}]}`';
+        $lines[] = '- Full relationship type examples: [Relationship Write Payload Guide](#relationship-write-payload-guide)';
+        $lines[] = '';
+        $lines[] = 'These rules align with docs/api-documentation.md relationship sections.';
+
+        return implode("\n", $lines);
+    }
+}
