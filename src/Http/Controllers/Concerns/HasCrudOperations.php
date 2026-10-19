@@ -208,41 +208,9 @@ trait HasCrudOperations
                 return $tenantError;
             }
 
-            $triggerParams = $this->recordService->executeGlobalTrigger(
-                hook: 'beforeCreate',
-                params: [$request, $table, [RecordConfigService::tenantColumn() => $tenantId]]
-            );
-            if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
-                $request = $triggerParams[0];
-            }
-
-            $triggerParams = $this->recordService->executeTableTrigger(
-                trigger: $tableSchema->beforeCreate ?? null,
-                params: [$request, $table, [RecordConfigService::tenantColumn() => $tenantId]]
-            );
-            if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
-                $request = $triggerParams[0];
-            }
-
-            if ($tableSchema->createValidator) {
-                $response = $this->runTableValidators($tableSchema->createValidator, $request, null);
-                if ($response instanceof JsonResponse) {
-                    return $response;
-                }
-            }
-           
-            if (
-                RecordConfigService::defaultValidationEnabled()
-                && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->createValidator)
-            ) {
-                $rules = DefaultValidationUtils::buildCreateRules($tableSchema);
-             
-                if ($rules !== []) {
-                    $validator = Validator::make($request->all(), $rules);
-                    if ($validator->fails()) {
-                        return RecordApiResponseService::errorWrapped('Validation failed', RecordApiJsonResponseEnum::VALIDATION_ERROR->value, $validator->errors()->toArray());
-                    }
-                }
+            [$request, $errorResponse] = $this->runBeforeCreate($request, $table, $tableSchema, $tenantId);
+            if ($errorResponse instanceof JsonResponse) {
+                return $errorResponse;
             }
 
             $payload = $request->all();
@@ -302,41 +270,9 @@ trait HasCrudOperations
                 return $tenantError;
             }
 
-            $triggerParams = $this->recordService->executeGlobalTrigger(
-                hook: 'beforeUpdate',
-                params: [$request, $table, ['id' => $id, RecordConfigService::tenantColumn() => $tenantId]]
-            );
-            if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
-                $request = $triggerParams[0];
-            }
-
-            $triggerParams = $this->recordService->executeTableTrigger(
-                trigger: $tableSchema->beforeUpdate ?? null,
-                params: [$request, $table, ['id' => $id, RecordConfigService::tenantColumn() => $tenantId]]
-            );
-            if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
-                $request = $triggerParams[0];
-            }
-
-            if ($tableSchema->updateValidator) {
-                $response = $this->runTableValidators($tableSchema->updateValidator, $request, $id);
-                if ($response instanceof JsonResponse) {
-                    return $response;
-                }
-            }
-
-            if (
-                RecordConfigService::defaultValidationEnabled()
-                && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->updateValidator)
-            ) {
-                $rules = DefaultValidationUtils::buildUpdateRules($tableSchema, $id);
-
-                if ($rules !== []) {
-                    $validator = Validator::make($request->all(), $rules);
-                    if ($validator->fails()) {
-                        return RecordApiResponseService::errorWrapped('Validation failed', RecordApiJsonResponseEnum::VALIDATION_ERROR->value, $validator->errors()->toArray());
-                    }
-                }
+            [$request, $errorResponse] = $this->runBeforeUpdate($request, $table, $tableSchema, $tenantId, $id);
+            if ($errorResponse instanceof JsonResponse) {
+                return $errorResponse;
             }
 
             $payload = $request->all();
@@ -654,6 +590,17 @@ trait HasCrudOperations
                 }
             }
 
+            // An upsert is a create or an update: run the hooks and validators of the one it will perform.
+            $existingId = $this->recordService->findUpsertMatch(table: $table, payload: $payload, tenantId: $tenantId, matchOn: $matchOn);
+            [$request, $errorResponse] = null === $existingId
+                ? $this->runBeforeCreate($request, $table, $tableSchema, $tenantId)
+                : $this->runBeforeUpdate($request, $table, $tableSchema, $tenantId, (string) $existingId);
+            if ($errorResponse instanceof JsonResponse) {
+                return $errorResponse;
+            }
+
+            $payload = $request->all();
+
             $result = $this->recordService->upsertRecord($request, $table, $payload, $tenantId, $matchOn);
 
             return RecordApiResponseService::successWrapped($result['data'], $result['meta']);
@@ -666,5 +613,99 @@ trait HasCrudOperations
         } catch (Exception $e) {
             return RecordApiResponseService::errorFromException($e, 'An error occurred', RecordApiJsonResponseEnum::SERVER_ERROR->value);
         }
+    }
+
+    /**
+     * Run the before-create hooks and validators of a single-record create.
+     *
+     * @return array{0: Request, 1: JsonResponse|null} The (possibly trigger-replaced) request and an error response, if any
+     */
+    private function runBeforeCreate(Request $request, string $table, RecordTableType $tableSchema, mixed $tenantId): array
+    {
+        $triggerParams = $this->recordService->executeGlobalTrigger(
+            hook: 'beforeCreate',
+            params: [$request, $table, [RecordConfigService::tenantColumn() => $tenantId]]
+        );
+        if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
+            $request = $triggerParams[0];
+        }
+
+        $triggerParams = $this->recordService->executeTableTrigger(
+            trigger: $tableSchema->beforeCreate ?? null,
+            params: [$request, $table, [RecordConfigService::tenantColumn() => $tenantId]]
+        );
+        if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
+            $request = $triggerParams[0];
+        }
+
+        if ($tableSchema->createValidator) {
+            $response = $this->runTableValidators($tableSchema->createValidator, $request, null);
+            if ($response instanceof JsonResponse) {
+                return [$request, $response];
+            }
+        }
+
+        if (
+            RecordConfigService::defaultValidationEnabled()
+            && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->createValidator)
+        ) {
+            $rules = DefaultValidationUtils::buildCreateRules($tableSchema);
+
+            if ($rules !== []) {
+                $validator = Validator::make($request->all(), $rules);
+                if ($validator->fails()) {
+                    return [$request, RecordApiResponseService::errorWrapped('Validation failed', RecordApiJsonResponseEnum::VALIDATION_ERROR->value, $validator->errors()->toArray())];
+                }
+            }
+        }
+
+        return [$request, null];
+    }
+
+    /**
+     * Run the before-update hooks and validators of a single-record update.
+     *
+     * @return array{0: Request, 1: JsonResponse|null} The (possibly trigger-replaced) request and an error response, if any
+     */
+    private function runBeforeUpdate(Request $request, string $table, RecordTableType $tableSchema, mixed $tenantId, string $id): array
+    {
+        $triggerParams = $this->recordService->executeGlobalTrigger(
+            hook: 'beforeUpdate',
+            params: [$request, $table, ['id' => $id, RecordConfigService::tenantColumn() => $tenantId]]
+        );
+        if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
+            $request = $triggerParams[0];
+        }
+
+        $triggerParams = $this->recordService->executeTableTrigger(
+            trigger: $tableSchema->beforeUpdate ?? null,
+            params: [$request, $table, ['id' => $id, RecordConfigService::tenantColumn() => $tenantId]]
+        );
+        if (isset($triggerParams[0]) && $triggerParams[0] instanceof Request) {
+            $request = $triggerParams[0];
+        }
+
+        if ($tableSchema->updateValidator) {
+            $response = $this->runTableValidators($tableSchema->updateValidator, $request, $id);
+            if ($response instanceof JsonResponse) {
+                return [$request, $response];
+            }
+        }
+
+        if (
+            RecordConfigService::defaultValidationEnabled()
+            && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->updateValidator)
+        ) {
+            $rules = DefaultValidationUtils::buildUpdateRules($tableSchema, $id);
+
+            if ($rules !== []) {
+                $validator = Validator::make($request->all(), $rules);
+                if ($validator->fails()) {
+                    return [$request, RecordApiResponseService::errorWrapped('Validation failed', RecordApiJsonResponseEnum::VALIDATION_ERROR->value, $validator->errors()->toArray())];
+                }
+            }
+        }
+
+        return [$request, null];
     }
 }

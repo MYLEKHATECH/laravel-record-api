@@ -18,6 +18,7 @@ use Illuminate\Support\Str;
 use Mylekha\RecordApi\Utilities\TimeUtils;
 use Mylekha\RecordApi\Enums\AuditLogEventEnum;
 use Mylekha\RecordApi\Enums\RecordApiJsonResponseEnum;
+use Mylekha\RecordApi\Exceptions\RecordNotFoundException;
 use Mylekha\RecordApi\Utilities\QueryBuilderFiltersUtils;
 use Mylekha\RecordApi\Utilities\RelationshipResolverUtils;
 use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
@@ -240,17 +241,7 @@ class RecordService
         $actualTableName = $tableSchema->table ?? $table;
         $pk = $tableSchema->primaryKey ?? 'id';
 
-        // Resolve match_on if not provided
-        if (empty($matchOn)) {
-            $matchOnStr = $request->query('match_on');
-            if (!empty($matchOnStr)) {
-                $matchOn = explode(',', $matchOnStr);
-            }
-        }
-
-        if (empty($matchOn)) {
-            throw new Exception('match_on query parameter is required for upsert operation', RecordApiJsonResponseEnum::VALIDATION_ERROR->value);
-        }
+        $matchOn = $this->resolveUpsertMatchOn($request, $matchOn);
 
         // Sanitize payload
         $item = $this->sanitizePayload($payload, $tableSchema);
@@ -321,6 +312,60 @@ class RecordService
             ],
             'meta' => [],
         ];
+    }
+
+    /**
+     * Resolve the upsert match columns, falling back to the `match_on` query parameter.
+     */
+    public function resolveUpsertMatchOn(Request $request, array $matchOn = []): array
+    {
+        if (empty($matchOn)) {
+            $matchOnStr = $request->query('match_on');
+            if (!empty($matchOnStr)) {
+                $matchOn = explode(',', $matchOnStr);
+            }
+        }
+
+        if (empty($matchOn)) {
+            throw new Exception('match_on query parameter is required for upsert operation', RecordApiJsonResponseEnum::VALIDATION_ERROR->value);
+        }
+
+        return $matchOn;
+    }
+
+    /**
+     * Find the row an upsert of $payload will update, matched on $matchOn like upsertRecord() reads it back.
+     * Returns its primary key, or null when the upsert will insert a new row.
+     */
+    public function findUpsertMatch(string $table, array $payload, mixed $tenantId, array $matchOn): mixed
+    {
+        $tableSchema = SchemaRegistryUtils::getTable($table);
+        $actualTableName = $tableSchema->table ?? $table;
+        $pk = $tableSchema->primaryKey ?? 'id';
+        $tenantEnabled = $this->shouldApplyTenantId($tableSchema);
+
+        $item = $this->sanitizePayload($payload, $tableSchema);
+        if ($tenantEnabled) {
+            $item[RecordConfigService::tenantColumn()] = $this->normalizeTenantId($tenantId);
+        }
+
+        $query = DB::table($actualTableName);
+        foreach ($matchOn as $col) {
+            // A NULL never conflicts with a unique key, so the upsert inserts.
+            if (!isset($item[$col])) {
+                return null;
+            }
+
+            $query->where($col, $item[$col]);
+        }
+
+        if ($tenantEnabled) {
+            $this->applyTenantFilter($query, $table, $tenantId);
+        }
+
+        $record = $query->first([$pk]);
+
+        return $record ? $record->$pk : null;
     }
 
     /**
@@ -800,6 +845,16 @@ class RecordService
         }
 
         $pk = $tableSchema->primaryKey ?? 'id';
+
+        // Upsert items are refused, before anything is written, on tables whose upsert endpoints are disabled.
+        if (!($tableSchema->canUpsert ?? false)) {
+            foreach ($items as $item) {
+                if (is_array($item) && 'upsert' === $this->determineOperation($item, $pk, $legacyAction)) {
+                    throw new RecordNotFoundException('Resource not available');
+                }
+            }
+        }
+
         $affected = 0;
         $createdData = [];
         $updatedData = [];
@@ -877,7 +932,16 @@ class RecordService
                         ]);
                     }
                 } elseif ('upsert' === $operation) {
-                    $result = $this->upsertRecord($request, $table, $item, $tenantId);
+                    // Run the before-trigger of the write the upsert will perform, as the create/update branches do.
+                    $matchOn = $this->resolveUpsertMatchOn($request);
+                    $existingId = $this->findUpsertMatch($table, $item, $tenantId, $matchOn);
+                    if (null === $existingId) {
+                        $this->executeTableTrigger($tableSchema->beforeCreate ?? null, [$request, $table, $item]);
+                    } else {
+                        $this->executeTableTrigger($tableSchema->beforeUpdate ?? null, [$request, $table, $existingId, $item]);
+                    }
+
+                    $result = $this->upsertRecord($request, $table, $item, $tenantId, $matchOn);
                     $upsertedId = $result['data']['id'] ?? ($item[$pk] ?? null);
 
                     if ($upsertedId) {

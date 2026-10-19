@@ -1949,9 +1949,14 @@ JSON object with field values:
 }
 ```
 
+#### Hooks and Validation
+
+Before writing, the row is looked up by `match_on`. If it does not exist the upsert is a create: the global and table `beforeCreate` triggers, `createValidator` and default create validation run exactly as for `POST /{table}`. If it exists the upsert is an update: the global and table `beforeUpdate` triggers (with the existing row's `id` in the context), `updateValidator` and default update validation run exactly as for `PUT /{table}/{id}`. A trigger or validator that rejects the row refuses the upsert with the same response the create/update would give, and nothing is written.
+
 #### Status Codes
 
 - `200` - Success
+- `404` - Resource not available (table not configured, or `canUpsert` is `false`)
 - `422` - Validation error (missing `match_on` or invalid payload)
 
 #### Update Record
@@ -2399,6 +2404,10 @@ POST /{api_prefix}/{table}/bulk/upsert
 ```
 
 Bulk create or update records based on matching columns.
+
+Each row is looked up by `match_on` and then runs the same default validation and global/table `beforeCreate` (new row) or `beforeUpdate` (existing row, with its id) hooks as `bulk/create` and `bulk/update`. Rows are written one by one inside a single transaction, so a trigger sees the rows written before it, and a rejected row rolls back the whole batch. Returns `404` when `canUpsert` is `false`.
+
+Items sent to `POST /{api_prefix}/{table}/bulk` with `"operation": "upsert"` are also refused (`404`, nothing written) when `canUpsert` is `false`, and run the table `beforeCreate` / `beforeUpdate` trigger of the write they perform, like the create and update items of that endpoint.
 
 #### Query Parameters
 
