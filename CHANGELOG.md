@@ -4,6 +4,17 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-19
+
+### Security
+- `POST /{table}/bulk` items with `"operation": "upsert"` (and the queued `ProcessBulkOperationJob` with operation `upsert`) ignored the table's `canUpsert`, so a table whose upsert endpoints were disabled could still be upserted. Such a batch is now refused as a whole with the same `404 Resource not available` response as `POST /{table}/upsert`, and nothing is written.
+- Upserts skipped the before-hooks and validators that create and update run, so validation, tenant rules and limits placed in `beforeCreate` / `beforeUpdate` triggers could be bypassed by upserting instead. Each upserted row is now looked up by `match_on` first and runs the hooks of the write it performs:
+  - `POST /{table}/upsert`: the global and table `beforeCreate` trigger, `createValidator` and default create validation for a new row; the global and table `beforeUpdate` trigger (with the existing `id`), `updateValidator` and default update validation for an existing row — the same as `POST /{table}` and `PUT /{table}/{id}`.
+  - `POST /{table}/bulk/upsert`: the same per-row default validation and global/table before-hooks as `bulk/create` and `bulk/update`. Rows are written one by one inside one transaction, so a trigger sees the rows written before it and a rejected row rolls back the batch.
+  - `POST /{table}/bulk` with `"operation": "upsert"`: the table `beforeCreate` / `beforeUpdate` trigger, like the create and update items of that endpoint.
+
+  A rejecting trigger or validator refuses the upsert with the same response the create/update would give. After-hooks and audit logging are unchanged.
+
 ## [1.0.2] - 2026-10-05
 
 ### Changed

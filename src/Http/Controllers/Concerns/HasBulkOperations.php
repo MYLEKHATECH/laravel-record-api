@@ -13,6 +13,7 @@ use Mylekha\RecordApi\Exceptions\RecordNotFoundException;
 use Mylekha\RecordApi\Services\RecordApiResponseService;
 use Mylekha\RecordApi\Services\RecordConfigService;
 use Mylekha\RecordApi\Services\RecordService;
+use Mylekha\RecordApi\Types\RecordTableType;
 use Mylekha\RecordApi\Utilities\DefaultValidationUtils;
 
 /**
@@ -105,9 +106,24 @@ trait HasBulkOperations
                 }
             }
 
-            $result = $this->recordService->bulkUpsertRecord($request, $table, $items, $tenantId, $matchOn);
+            // Each row is a create or an update: run that write's hooks and validators, then write
+            // the row before checking the next one so triggers see the rows written before it.
+            return $this->withinTransaction(function () use ($request, $table, $items, $tenantId, $tableSchema, $matchOn): JsonResponse {
+                $count = 0;
+                foreach ($items as $item) {
+                    $existingId = $this->recordService->findUpsertMatch(table: $table, payload: $item, tenantId: $tenantId, matchOn: $matchOn);
+                    if (null === $existingId) {
+                        $this->runBulkBeforeCreate($request, $table, $tableSchema, $item);
+                    } else {
+                        $this->runBulkBeforeUpdate($request, $table, $tableSchema, $existingId, $item);
+                    }
 
-            return RecordApiResponseService::successWrapped($result['data'], $result['meta']);
+                    $result = $this->recordService->bulkUpsertRecord($request, $table, [$item], $tenantId, $matchOn);
+                    $count += $result['data']['count'];
+                }
+
+                return RecordApiResponseService::successWrapped(['count' => $count], []);
+            });
         } catch (RecordNotFoundException $e) {
             return RecordApiResponseService::errorWrapped($e->getMessage(), RecordApiJsonResponseEnum::NOT_FOUND->value);
         } catch (ValidationException $e) {
@@ -176,28 +192,7 @@ trait HasBulkOperations
                         ]);
                     }
 
-                    if (
-                        RecordConfigService::defaultValidationEnabled()
-                        && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->createValidator)
-                    ) {
-                        $rules = DefaultValidationUtils::buildCreateRules($tableSchema);
-                        if ($rules !== []) {
-                            $validator = Validator::make($item, $rules);
-                            if ($validator->fails()) {
-                                throw ValidationException::withMessages($validator->errors()->toArray());
-                            }
-                        }
-                    }
-
-                    $this->recordService->executeGlobalTrigger(
-                        hook: 'beforeCreate',
-                        params: [$request, $table, $item]
-                    );
-
-                    $this->recordService->executeTableTrigger(
-                        trigger: $tableSchema->beforeCreate ?? null,
-                        params: [$request, $table, $item]
-                    );
+                    $this->runBulkBeforeCreate($request, $table, $tableSchema, $item);
 
                     $result   = $this->recordService->createRecord(table: $table, payload: $item, tenantId: $tenantId);
                     $insertId = $result['id'];
@@ -303,28 +298,7 @@ trait HasBulkOperations
                     $id = $item[$pk];
                     unset($item[$pk]);
 
-                    if (
-                        RecordConfigService::defaultValidationEnabled()
-                        && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->updateValidator)
-                    ) {
-                        $rules = DefaultValidationUtils::buildUpdateRules($tableSchema, $id);
-                        if ($rules !== []) {
-                            $validator = Validator::make($item, $rules);
-                            if ($validator->fails()) {
-                                throw ValidationException::withMessages($validator->errors()->toArray());
-                            }
-                        }
-                    }
-
-                    $this->recordService->executeGlobalTrigger(
-                        hook: 'beforeUpdate',
-                        params: [$request, $table, $id, $item]
-                    );
-
-                    $this->recordService->executeTableTrigger(
-                        trigger: $tableSchema->beforeUpdate ?? null,
-                        params: [$request, $table, $id, $item]
-                    );
+                    $this->runBulkBeforeUpdate($request, $table, $tableSchema, $id, $item);
 
                     $result      = $this->recordService->updateRecord(table: $table, id: $id, payload: $item, tenantId: $tenantId);
                     $updateCount = $result['updated'];
@@ -488,5 +462,63 @@ trait HasBulkOperations
         } catch (Exception $e) {
             return RecordApiResponseService::errorFromException($e, 'An error occurred', RecordApiJsonResponseEnum::SERVER_ERROR->value);
         }
+    }
+
+    /**
+     * Run the default validation and before-create hooks of one bulk-create row.
+     */
+    private function runBulkBeforeCreate(Request $request, string $table, RecordTableType $tableSchema, array $item): void
+    {
+        if (
+            RecordConfigService::defaultValidationEnabled()
+            && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->createValidator)
+        ) {
+            $rules = DefaultValidationUtils::buildCreateRules($tableSchema);
+            if ($rules !== []) {
+                $validator = Validator::make($item, $rules);
+                if ($validator->fails()) {
+                    throw ValidationException::withMessages($validator->errors()->toArray());
+                }
+            }
+        }
+
+        $this->recordService->executeGlobalTrigger(
+            hook: 'beforeCreate',
+            params: [$request, $table, $item]
+        );
+
+        $this->recordService->executeTableTrigger(
+            trigger: $tableSchema->beforeCreate ?? null,
+            params: [$request, $table, $item]
+        );
+    }
+
+    /**
+     * Run the default validation and before-update hooks of one bulk-update row.
+     */
+    private function runBulkBeforeUpdate(Request $request, string $table, RecordTableType $tableSchema, mixed $id, array $item): void
+    {
+        if (
+            RecordConfigService::defaultValidationEnabled()
+            && (!RecordConfigService::defaultValidationOnlyWhenMissing() || null === $tableSchema->updateValidator)
+        ) {
+            $rules = DefaultValidationUtils::buildUpdateRules($tableSchema, $id);
+            if ($rules !== []) {
+                $validator = Validator::make($item, $rules);
+                if ($validator->fails()) {
+                    throw ValidationException::withMessages($validator->errors()->toArray());
+                }
+            }
+        }
+
+        $this->recordService->executeGlobalTrigger(
+            hook: 'beforeUpdate',
+            params: [$request, $table, $id, $item]
+        );
+
+        $this->recordService->executeTableTrigger(
+            trigger: $tableSchema->beforeUpdate ?? null,
+            params: [$request, $table, $id, $item]
+        );
     }
 }
