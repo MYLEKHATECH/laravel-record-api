@@ -28,6 +28,7 @@ use Mylekha\RecordApi\Types\RecordTableType;
 use Mylekha\RecordApi\Utilities\RecordPayloadExtractor;
 use Mylekha\RecordApi\Types\RecordBelongsToType;
 use Mylekha\RecordApi\Utilities\RecordUtils;
+use Mylekha\RecordApi\Utilities\UniqueIdUtils;
 
 class RecordService
 {
@@ -242,9 +243,10 @@ class RecordService
         $pk = $tableSchema->primaryKey ?? 'id';
 
         $matchOn = $this->resolveUpsertMatchOn($request, $matchOn);
+        UniqueIdUtils::assertNotMatchedOn($matchOn, $tableSchema);
 
-        // Sanitize payload
-        $item = $this->sanitizePayload($payload, $tableSchema);
+        // Sanitize payload; a new row gets fresh unique ids (kept out of the update columns below)
+        $item = UniqueIdUtils::fill($this->sanitizePayload($payload, $tableSchema), $tableSchema);
         if ($this->shouldApplyTenantId($tableSchema)) {
             $item[RecordConfigService::tenantColumn()] = $this->normalizeTenantId($tenantId);
         }
@@ -256,7 +258,8 @@ class RecordService
         $excludeColumns = array_merge($matchOn, [$pk, 'id', 'created_at', 'deleted_at']);
 
         // If specific update columns are configured, use them. Otherwise, update all non-excluded columns.
-        $updateColumns = array_values(array_diff(array_keys($item), $excludeColumns));
+        // Unique-id columns are never updated, so a matched row keeps its value.
+        $updateColumns = UniqueIdUtils::withoutColumns(array_values(array_diff(array_keys($item), $excludeColumns)), $tableSchema);
 
         // Ensure we have something to update, otherwise upsert might fail or do nothing if all columns match
         // If no columns to update, we might just return the existing record or do nothing.
@@ -284,8 +287,16 @@ class RecordService
             $this->applyTenantFilter($query, $table, $tenantId);
         }
 
-        $record = $query->first([$pk]);
+        $uniqueIdColumns = UniqueIdUtils::columns($tableSchema);
+        $record = $query->first(array_values(array_unique([$pk, ...$uniqueIdColumns])));
         $id = $record ? $record->$pk : null;
+
+        // A matched row kept its own unique ids: report the stored values, not the ones generated for an insert.
+        foreach ($uniqueIdColumns as $column) {
+            if ($record && property_exists($record, $column)) {
+                $item[$column] = $record->$column;
+            }
+        }
 
         if ($id) {
             $this->invalidateRecordCache($table, $id, $cacheTenantId, $tenantEnabled);
@@ -343,6 +354,7 @@ class RecordService
         $actualTableName = $tableSchema->table ?? $table;
         $pk = $tableSchema->primaryKey ?? 'id';
         $tenantEnabled = $this->shouldApplyTenantId($tableSchema);
+        UniqueIdUtils::assertNotMatchedOn($matchOn, $tableSchema);
 
         $item = $this->sanitizePayload($payload, $tableSchema);
         if ($tenantEnabled) {
@@ -381,11 +393,14 @@ class RecordService
         $tenantEnabled = $this->shouldApplyTenantId($tableSchema);
         $cacheTenantId = $tenantEnabled ? $this->normalizeTenantId($tenantId) : null;
 
+        UniqueIdUtils::assertNotMatchedOn($matchOn, $tableSchema);
+
         $preparedItems = [];
         $updateColumns = [];
 
         foreach ($payloads as $payload) {
-            $item = $this->sanitizePayload($payload, $tableSchema);
+            // New rows get fresh unique ids; they are kept out of the update columns below.
+            $item = UniqueIdUtils::fill($this->sanitizePayload($payload, $tableSchema), $tableSchema);
             if ($tenantEnabled) {
                 $item[RecordConfigService::tenantColumn()] = $cacheTenantId;
             }
@@ -401,7 +416,7 @@ class RecordService
         // Calculate update columns from the first item (assuming uniform payload structure)
         $firstItem = $preparedItems[0];
         $excludeColumns = array_merge($matchOn, [$pk, 'id', 'created_at', 'deleted_at']);
-        $updateColumns = array_values(array_diff(array_keys($firstItem), $excludeColumns));
+        $updateColumns = UniqueIdUtils::withoutColumns(array_values(array_diff(array_keys($firstItem), $excludeColumns)), $tableSchema);
         if (empty($updateColumns) && array_key_exists('updated_at', $firstItem)) {
             $updateColumns = ['updated_at'];
         }
@@ -1307,6 +1322,9 @@ class RecordService
             unset($payload[$column]);
         }
 
+        // Server-generated unique ids are never taken from the client (inserts fill them afterwards).
+        $payload = UniqueIdUtils::strip($payload, $meta);
+
         unset($payload['id']);
         $overrideTimestamps = filter_var($meta->overrideTimestamps ?? false, FILTER_VALIDATE_BOOLEAN);
         if (!$overrideTimestamps) {
@@ -1340,6 +1358,10 @@ class RecordService
             } else {
                 $payloadMain[$tenantColumn] = $this->normalizeTenantId($tenantId);
             }
+        }
+
+        if (!$isUpdate) {
+            $payloadMain = UniqueIdUtils::fill($payloadMain, $tableSchema);
         }
 
         return $this->applyTimestampsAndAuditFields($payloadMain, $tableSchema, $isUpdate);

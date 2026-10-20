@@ -1035,6 +1035,7 @@ new RecordTableType(
     columnHiddens: [],
     columnWriteDisabled: [],
     columnIndexes: [],
+    uniqueIds: [],
     auditLogFn: null,
     createValidator: null,
     updateValidator: null,
@@ -1086,6 +1087,7 @@ new RecordTableType(
 - `columnHiddens` (?array, default: `[]`): List of column names to always hide from API responses. This is applied recursively to nested relationships as well. Hidden columns are removed even if their value is `null`.
 - `columnWriteDisabled` (?array, default: `[]`): List of column names that are not writable via API payloads (create, update, upsert, and nested relationship writes). These columns are stripped from incoming payloads even if provided by the client.
 - `columnIndexes` (?array, default: `[]`): Declares full-text index column sets for search optimization. Format: a list of column name arrays, e.g. `[['name', 'description'], ['content']]`.
+- `uniqueIds` (array, default: `[]`): Columns whose value the server generates, e.g. `['uuid']` for an immutable UUID secondary key next to the integer primary key. Every insert the engine performs into the table sets each listed column to a fresh lowercase UUIDv7 (`Str::uuid7()`), overriding any client-supplied value: create, bulk create, the create items of `POST /{table}/bulk`, upserts that insert a new row, and nested relationship creates into this table (has-many children, many-to-many related rows and pivot rows, has-many-through targets and through rows). Updates never change it: the columns are stripped from update payloads (single, bulk and nested) and from the update columns of upserts, so an upsert that matches an existing row keeps its value. Default validation adds no rules for these columns, and an upsert whose `match_on` names one is refused with `422`. List the column in `columns` too (or let it be read from the database) to return it in responses. Tables without `uniqueIds` behave as before.
 
 #### Relationships & Table RPC Functions
 

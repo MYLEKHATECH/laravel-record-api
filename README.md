@@ -416,6 +416,19 @@ This generates `config/records/tables/customers.php` returning a `RecordTableTyp
 php artisan record-api:sync-record-columns --force
 ```
 
+### Server-Generated Unique IDs
+
+List columns in `uniqueIds` to have the engine generate them, e.g. an immutable UUID secondary key next to the integer primary key:
+
+```php
+return new RecordTableType(
+    table: 'stores',
+    uniqueIds: ['uuid'],
+);
+```
+
+Every insert the engine performs into the table (create, bulk create, upserts that insert, nested relationship creates) sets each listed column to a fresh lowercase UUIDv7, ignoring any client-supplied value. Updates never change it: it is stripped from update payloads and left out of an upsert's update columns, so an upsert that matches an existing row keeps that row's value. Default validation adds no rules for these columns, and an upsert cannot use one in `match_on` (`422`). The column is still returned in responses like any other column. See `docs/api-documentation.md` for the full list of write paths.
+
 ### Computed Attributes (Lazy Response Fields)
 
 You can attach computed fields to any table's read responses using the `attributes` property on `RecordTableType`. Resolvers are **lazy** — they only execute when the field key appears explicitly in `?select=`.

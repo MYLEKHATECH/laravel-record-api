@@ -4,6 +4,17 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-20
+
+### Added
+- `uniqueIds` table option on `RecordTableType` (default `[]`): a list of columns the server generates, such as an immutable `uuid` secondary key. Rows created through the engine's raw query-builder inserts used to get `NULL` there, because only Eloquent filled such columns and `beforeCreate` triggers cannot add fields. For every listed column:
+  - every insert the engine performs into the table sets a fresh lowercase UUIDv7, overriding any client-supplied value: `POST /{table}`, `POST /{table}/bulk/create`, create items of `POST /{table}/bulk` (and the queued `ProcessBulkOperationJob`), upserts that insert a new row (`POST /{table}/upsert`, `POST /{table}/bulk/upsert`, upsert items of `POST /{table}/bulk`), and nested relationship creates into the table (has-many children, many-to-many related and pivot rows, has-many-through target and through rows);
+  - updates never change it: it is stripped from update payloads (single, bulk and nested) and left out of an upsert's update columns, so an upsert matching an existing row keeps that row's value;
+  - default validation adds no rules for it (a `NOT NULL` column is not reported as required);
+  - an upsert whose `match_on` names it is refused with `422`, since the client value is never written.
+
+  Tables without `uniqueIds` behave exactly as before.
+
 ## [1.0.3] - 2026-10-19
 
 ### Security
