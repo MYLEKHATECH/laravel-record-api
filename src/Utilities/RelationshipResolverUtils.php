@@ -550,6 +550,7 @@ class RelationshipResolverUtils
                 // Sanitize payload: only allowed columns; drop system/protected fields
                 $item = array_intersect_key($item, array_flip($allowedCols));
                 unset($item['id'], $item['created_at'], $item['updated_at'], $item['deleted_at']);
+                $item = UniqueIdUtils::strip($item, $relatedSchema);
                 if ($hasTenant) {
                     unset($item[RecordConfigService::tenantColumn()]);
                 }
@@ -583,7 +584,7 @@ class RelationshipResolverUtils
                 } elseif ('create' === $operation || $allowCreate) {
                     // Create path
                     unset($item['id']);
-                    DB::table($actualRelatedTableName)->insert($item);
+                    DB::table($actualRelatedTableName)->insert(UniqueIdUtils::fill($item, $relatedSchema));
                 }
             }
         }
@@ -643,6 +644,7 @@ class RelationshipResolverUtils
                     $relatedFields['updated_at'] = TimeUtils::now();
                 }
 
+                $relatedFields = UniqueIdUtils::fill($relatedFields, $relatedSchema);
                 $relatedId = DB::table($actualRelatedTableName)->insertGetId($relatedFields);
             }
 
@@ -665,6 +667,9 @@ class RelationshipResolverUtils
                     ->where($relatedPivotKey, $relatedId)
                     ->exists();
 
+                $pivotSchema = $schema[$pivotTable] ?? null;
+                $pivotData = UniqueIdUtils::strip($pivotData, $pivotSchema);
+
                 if ($exists) {
                     if ($allowUpdate && !empty($pivotData)) {
                         if (($config['with_timestamps'] ?? false)) {
@@ -684,7 +689,7 @@ class RelationshipResolverUtils
                         $pivotData['updated_at'] = TimeUtils::now();
                     }
 
-                    DB::table($pivotTable)->insert($pivotData);
+                    DB::table($pivotTable)->insert(UniqueIdUtils::fill($pivotData, $pivotSchema));
                 }
             }
         }
@@ -747,6 +752,7 @@ class RelationshipResolverUtils
                     $targetFields['updated_at'] = TimeUtils::now();
                 }
 
+                $targetFields = UniqueIdUtils::fill($targetFields, $targetSchema);
                 $targetId = DB::table($actualTargetTableName)->insertGetId($targetFields);
             }
 
@@ -775,7 +781,7 @@ class RelationshipResolverUtils
                         $insertData[$ownerColumn] = $ownerValue;
                     }
 
-                    DB::table($throughTable)->insert($insertData);
+                    DB::table($throughTable)->insert(UniqueIdUtils::fill($insertData, $schema[$throughTable] ?? null));
                 }
             }
         }

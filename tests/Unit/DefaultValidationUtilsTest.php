@@ -54,6 +54,30 @@ class DefaultValidationUtilsTest extends TestCase
     }
 
     /** @test */
+    public function it_skips_server_generated_unique_id_columns(): void
+    {
+        if (!Schema::hasTable('validation_tokens')) {
+            Schema::create('validation_tokens', function (Blueprint $table): void {
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->string('name');
+                $table->timestamps();
+            });
+        }
+
+        $table = new RecordTableType(table: 'validation_tokens', uniqueIds: ['uuid']);
+        $table->columns = SchemaRegistryUtils::getTableColumns('validation_tokens');
+
+        $this->assertArrayNotHasKey('uuid', DefaultValidationUtils::buildCreateRules($table));
+        $this->assertArrayNotHasKey('uuid', DefaultValidationUtils::buildUpdateRules($table, 1));
+        $this->assertArrayHasKey('name', DefaultValidationUtils::buildCreateRules($table));
+
+        $plain = new RecordTableType(table: 'validation_tokens');
+        $plain->columns = SchemaRegistryUtils::getTableColumns('validation_tokens');
+        $this->assertArrayHasKey('uuid', DefaultValidationUtils::buildCreateRules($plain));
+    }
+
+    /** @test */
     public function it_enforces_default_validation_when_enabled(): void
     {
         Config::set('record.default_validation.enabled', true);

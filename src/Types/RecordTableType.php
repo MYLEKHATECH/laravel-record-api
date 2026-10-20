@@ -27,6 +27,7 @@ use Closure;
  * @property null|array        $columnWriteDisabled    Columns that cannot be written via API payloads
  * @property null|array        $columnIndexes  Array of full-text index configurations for optimized search
  * @property string|array|null $customAuditLog Custom audit logger callback (callable string or [class, httpMethod])
+ * @property array             $uniqueIds       Columns filled with a fresh server-generated UUIDv7 on every insert (client values ignored) and never changed by updates
  *
  * Example usage:
  * ```php
@@ -86,6 +87,7 @@ use Closure;
  *         ['name', 'description'],
  *         ['content'],
  *     ],
+ *     uniqueIds: ['uuid'], // server-generated UUIDv7 on insert, never updated
  * );
  * ```
  */
@@ -132,6 +134,7 @@ class RecordTableType
         public ?array $attributes = null,
         public ?array $casting = null,
         public ?array $permissions = null,
+        public readonly array $uniqueIds = [],
     ) {
         if ($this->isAuthRead && $this->isAuthWrite && $this->hasLegacyPublicOverride($this->public)) {
             $authFlags = $this->deriveAuthFlagsFromPublic($this->public);
@@ -193,6 +196,7 @@ class RecordTableType
             attributes: $properties['attributes'] ?? null,
             casting: $properties['casting'] ?? null,
             permissions: $properties['permissions'] ?? null,
+            uniqueIds: $properties['uniqueIds'] ?? [],
         );
     }
 

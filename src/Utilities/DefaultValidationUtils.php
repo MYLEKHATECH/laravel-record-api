@@ -26,7 +26,8 @@ class DefaultValidationUtils
 
         $actualTableName = $tableSchema->table ?? '';
         $primaryKey = $tableSchema->primaryKey ?? 'id';
-        $writeDisabled = array_flip($tableSchema->columnWriteDisabled ?? []);
+        // Server-generated unique ids are never taken from the client, so they need no rules either.
+        $writeDisabled = array_flip(array_merge($tableSchema->columnWriteDisabled ?? [], UniqueIdUtils::columns($tableSchema)));
         $systemColumns = array_filter([
             $primaryKey,
             'created_at',
