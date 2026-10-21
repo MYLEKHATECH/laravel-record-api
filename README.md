@@ -1,4 +1,4 @@
-# SP Laravel Unified API
+# Record API
 
 A comprehensive Laravel package that provides standardized API responses, dynamic API controllers, query helpers, audit logging, optional permission integration, flexible authentication via Laravel guards, and OpenAPI specification generation for ERP SaaS applications.
 
@@ -42,10 +42,8 @@ curl -X GET http://your-app.test/api/v1/users
 ## 📚 Documentation
 
 - [API Documentation](docs/api-documentation.md): Detailed guide on endpoints, request/response formats, and bulk operations.
-- [Performance & Scalability](docs/performance.md): Benchmark results and optimization strategies.
 - [Audit Interface](docs/audit-interface.md): How to implement custom audit logging.
 - [Legacy Cursor Pagination](docs/cursor-pagination.md): Background on the removed cursor-based paginator.
-- [Use Cases](docs/use-cases.md): Why use this for SaaS ERP or E-commerce.
 
 ## 📋 Requirements
 
@@ -79,7 +77,7 @@ Add this to your project's `composer.json`:
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/mylekha/laravel-record-api.git"
+            "url": "https://github.com/MYLEKHATECH/laravel-record-api.git"
         }
     ],
     "require": {
@@ -602,7 +600,7 @@ return [
     'cache' => [
         'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
     
@@ -696,7 +694,7 @@ return [
     'cache' => [
         'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
     'global_functions' => $globalFunctions,
@@ -709,7 +707,7 @@ Each file under `config/records/globalFunctions` must return an array. File name
 
 ### Authentication Setup
 
-SP Laravel API does not ship its own authentication driver. Instead, it uses the Laravel `auth` guard you configure in `config/record-api.php`, which can point to any driver (JWT, Sanctum, Passport, etc.):
+Record API does not ship its own authentication driver. Instead, it uses the Laravel `auth` guard you configure in `config/record-api.php`, which can point to any driver (JWT, Sanctum, Passport, etc.):
 
 ```php
 return [
@@ -758,7 +756,7 @@ php artisan migrate
 
 ### Middleware Configuration
 
-SP Laravel API routes already include `request.id`. If you want request IDs on your own endpoints too, apply it to your routes:
+Record API routes already include `request.id`. If you want request IDs on your own endpoints too, apply it to your routes:
 
 ```php
 Route::middleware(['api', 'auth:api', 'request.id'])->group(function () {
@@ -977,13 +975,13 @@ php artisan route:clear
 ```bash
   # Clean old audit logs based on retention configuration
   php artisan record-api:clean-audit-logs
-  # Setup SP Laravel API package: publish configs and create record/audit configurations using config/record.php + config/records/tables/*.php + config/records/globalFunctions/*.php
+  # Setup Record API package: publish configs and create record/audit configurations using config/record.php + config/records/tables/*.php + config/records/globalFunctions/*.php
   php artisan record-api:setup
   # Create a RecordTableType config file under config/records/tables
   php artisan record-api:record customers
   # Populate RecordTableType columns in config/records/tables PHP files based on DB schema
   php artisan record-api:sync-record-columns
-  # Validate SP Laravel API package setup and configuration
+  # Validate Record API package setup and configuration
   php artisan record-api:validate
 ```
 
@@ -1130,34 +1128,6 @@ vendor/bin/rector process src
 4. Ensure all tests pass
 5. Submit a pull request
 
-## 📚 Migration Guide
-
-### From Version 1.x to 2.x
-
-```bash
-# Update composer.json
-"mylekha/record-api": "*"
-
-# Update dependencies
-composer update
-
-# Republish configurations
-php artisan vendor:publish --provider="Mylekha\RecordApi\RecordApiServiceProvider" --force
-
-# Run new migrations
-php artisan migrate
-
-# Update configuration format
-# See examples/config/record.php for new format
-```
-
-### Breaking Changes in 2.x
-
-- Configuration format changed to use Type classes
-- New permission system integration
-- Updated middleware registration
-- Enhanced caching mechanisms
-
 ## 🎯 Performance Optimization
 
 ### Database Optimization
@@ -1177,9 +1147,9 @@ CREATE INDEX idx_users_email ON users(email);
 // config/record.php
 return [
     'cache' => [
-        'enabled' => env('CACHE_API', false),
+        'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
 ];
@@ -1665,8 +1635,6 @@ php artisan record-api:clean-audit-logs --dry-run --days=90
 ### Package Documentation
 - **API Documentation**: [`docs/api-documentation.md`](docs/api-documentation.md) - Comprehensive API endpoints and usage guide
 - **Audit Interface**: [`docs/audit-interface.md`](docs/audit-interface.md) - Custom audit queries and logging
-- **Performance**: [`docs/performance.md`](docs/performance.md) - Benchmarks and optimization notes
-- **Use Cases**: [`docs/use-cases.md`](docs/use-cases.md) - Why use this for SaaS/ERP style APIs
 
 ### Core Classes Reference
 - **Request ID Middleware**: `Mylekha\RecordApi\Http\Middleware\RequestId`

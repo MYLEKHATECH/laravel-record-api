@@ -11,10 +11,10 @@ use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
 
 /*
 |--------------------------------------------------------------------------
-| SP Laravel API Routes
+| Record API Routes
 |--------------------------------------------------------------------------
 |
-| Here are the API routes for the SP Laravel API package.
+| Here are the API routes for the Record API package.
 | These routes provide dynamic CRUD operations for database tables
 | and audit management functionality.
 | 

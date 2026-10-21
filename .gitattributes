@@ -13,3 +13,6 @@
 /rector.php         export-ignore
 /AGENT.md           export-ignore
 /CONTRIBUTING.md    export-ignore
+/website            export-ignore
+/vercel.json        export-ignore
+/.vercelignore      export-ignore

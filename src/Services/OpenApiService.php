@@ -44,7 +44,7 @@ class OpenApiService
         $globalFunctionCount = count(RecordConfigService::globalFunctions());
 
         return <<<MDX
-# SP Laravel API Agent Contract
+# Record API Agent Contract
 
 This API is private/internal. Prefer OpenAPI as the source of truth.
 
@@ -224,7 +224,7 @@ GET /' . $apiPrefix . '/products?price=between.100,1000
 ```
 
 ### Documentation References
-- Interactive package docs: https://sp-laravel-api-docs.vercel.app/#/
+- Package docs: https://record-api-docs.vercel.app
 - Runtime OpenAPI JSON: /' . $apiPrefix . '/docs/openapi.json
 - Runtime API docs UI: /' . $apiPrefix . '/docs
 - Full Markdown guide: docs/api-documentation.md
@@ -321,7 +321,7 @@ This section describes payload format for write endpoints (`POST`, `PUT`, `PATCH
 }
 ```
 
-Full relationship examples and payload guides: https://sp-laravel-api-docs.vercel.app/#/
+Full relationship examples and payload guides: https://record-api-docs.vercel.app/reference/api
 
 ### Ordering & Sorting
 - **Basic**: `sortby=name&order=asc` (sort by column)

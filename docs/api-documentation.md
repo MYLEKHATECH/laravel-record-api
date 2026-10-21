@@ -1,8 +1,8 @@
 # API Documentation
 
-This document provides comprehensive documentation for the SP Laravel API package endpoints, request/response formats, and usage examples.
+This document provides comprehensive documentation for the Record API package endpoints, request/response formats, and usage examples.
 
-For full interactive examples, visit: https://record-api-docs.vercel.app/#/
+Browse the full documentation online at https://record-api-docs.vercel.app.
 
 ## Record CRUD API Documentation
 
@@ -2290,7 +2290,7 @@ curl --location --request PUT 'http://127.0.0.1:8000/api/v1/invoices/123' \
 
 Bulk operations allow you to perform Create, Update, or Delete actions on multiple records in a single HTTP request. This is significantly more efficient than sending individual requests for large datasets.
 
-For performance considerations and best practices when using bulk operations, please refer to the [Performance & Scalability](performance.md) guide.
+A single bulk request accepts at most `bulk_max` records (`config/record.php`, default `1000`).
 
 ### Triggers & Validation in Bulk Operations
 

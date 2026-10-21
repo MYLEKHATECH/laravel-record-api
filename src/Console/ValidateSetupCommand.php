@@ -24,7 +24,7 @@ class ValidateSetupCommand extends Command
      *
      * @var string
      */
-    protected $description = 'Validate SP Laravel API package setup and configuration';
+    protected $description = 'Validate Record API package setup and configuration';
 
     /**
      * Validation results.
@@ -36,7 +36,7 @@ class ValidateSetupCommand extends Command
      */
     public function handle(): int
     {
-        $this->info('🔍 Validating SP Laravel API Setup...');
+        $this->info('🔍 Validating Record API Setup...');
         $this->newLine();
 
         // Run all validation checks
@@ -533,7 +533,7 @@ class ValidateSetupCommand extends Command
             $this->info('💡 Consider addressing the warnings for optimal functionality.');
         } else {
             $this->newLine();
-            $this->info('🎉 Setup validation passed! Your SP Laravel API package is properly configured.');
+            $this->info('🎉 Setup validation passed! Your Record API package is properly configured.');
         }
     }
 

@@ -964,7 +964,7 @@ class RecordApiResponseService
         }
 
         if (self::shouldIncludeDebugDetails()) {
-            Log::error('SP Laravel API error response', [
+            Log::error('Record API error response', [
                 'message' => $message,
                 'status' => $status,
                 'error_code' => $resolvedErrorCode,

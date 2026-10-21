@@ -200,7 +200,7 @@ public function it_restores_null_middleware_via_set_state_when_absent_from_cache
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-cd /Users/whitehat/Desktop/mylekha/backend/mylekha_helper/sp-laravel-api
+cd /path/to/record-api
 vendor/bin/phpunit tests/Unit/RecordFunctionTypeTest.php --testdox
 ```
 
@@ -291,15 +291,15 @@ Create `tests/Feature/PerRpcMiddlewareTest.php`:
 ```php
 <?php
 
-namespace Sopheak\Core\Tests\Feature;
+namespace Mylekha\RecordApi\Tests\Feature;
 
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
-use Sopheak\Core\Tests\TestCase;
-use Sopheak\Core\Types\RecordFunctionType;
-use Sopheak\Core\Types\RecordTableType;
-use Sopheak\Core\Utilities\SchemaRegistryUtils;
+use Mylekha\RecordApi\Tests\TestCase;
+use Mylekha\RecordApi\Types\RecordFunctionType;
+use Mylekha\RecordApi\Types\RecordTableType;
+use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -522,9 +522,9 @@ Expected: all tests FAIL (feature not implemented yet)
 In `src/Http/Middleware/RecordRouteMiddleware.php`, add three new imports (note: `RecordConfigService` is already imported):
 
 ```php
-use Sopheak\Core\Interfaces\RecordFunctionInterface;
-use Sopheak\Core\Types\RecordFunctionType;
-use Sopheak\Core\Utilities\SchemaRegistryUtils;
+use Mylekha\RecordApi\Interfaces\RecordFunctionInterface;
+use Mylekha\RecordApi\Types\RecordFunctionType;
+use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
 ```
 
 - [ ] **Step 4: Add `resolveFunctionConfig()` private method**

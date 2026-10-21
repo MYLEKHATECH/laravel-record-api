@@ -148,7 +148,7 @@ class BasicTest extends TestCase
         Config::set('record.api_docs.is_private', true);
 
         $this->get('/api-docs/openapi.json')->assertStatus(401);
-        $this->withSession(['sp_api_docs_access_token' => 'test-token'])
+        $this->withSession(['record_api_docs_access_token' => 'test-token'])
             ->get('/api-docs/openapi.json')
             ->assertStatus(200);
     }

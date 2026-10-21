@@ -89,7 +89,7 @@ Route::post('/api-docs/auth/login', function (Request $request) {
         ], $response->status() >= 400 ? $response->status() : 401);
     }
 
-    $request->session()->put('sp_api_docs_access_token', $token);
+    $request->session()->put('record_api_docs_access_token', $token);
 
     return response()->json([
         'access_token' => $token,
@@ -98,13 +98,13 @@ Route::post('/api-docs/auth/login', function (Request $request) {
 })->middleware('web')->withoutMiddleware(VerifyCsrfToken::class);
 
 Route::post('/api-docs/auth/logout', function (Request $request) {
-    $request->session()->forget('sp_api_docs_access_token');
+    $request->session()->forget('record_api_docs_access_token');
     return response()->json(['ok' => true], 200);
 })->middleware('web')->withoutMiddleware(VerifyCsrfToken::class);
 
 Route::get('/api-docs/openapi.json', function (Request $request) {
     if ((bool) config('record.api_docs.is_private', false)) {
-        $token = (string) $request->session()->get('sp_api_docs_access_token', '');
+        $token = (string) $request->session()->get('record_api_docs_access_token', '');
         if (trim($token) === '') {
             return response()->json([
                 'success' => false,

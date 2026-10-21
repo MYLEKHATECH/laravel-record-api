@@ -1,0 +1,10 @@
+# Upload only what the docs site is built from (see vercel.json).
+/*
+!/README.md
+!/CHANGELOG.md
+!/docs
+!/website
+!/vercel.json
+/website/node_modules
+/website/.vitepress/dist
+/website/.vitepress/cache

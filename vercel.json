@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vitepress",
+  "installCommand": "npm ci --prefix website",
+  "buildCommand": "npm run build --prefix website",
+  "outputDirectory": "website/.vitepress/dist",
+  "cleanUrls": true
+}
