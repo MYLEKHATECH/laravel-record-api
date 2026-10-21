@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import llmstxt from 'vitepress-plugin-llms'
 import { repoUrl, sidebar } from '../pages.mjs'
 
 export default defineConfig({
@@ -19,8 +20,18 @@ export default defineConfig({
     attrs: { disable: true },
     languageAlias: { env: 'ini' },
   },
-  // The API Reference page is one long document; its chunk loads only on that page.
-  vite: { build: { chunkSizeWarningLimit: 1024 } },
+  vite: {
+    // The API Reference page is one long document; its chunk loads only on that page.
+    build: { chunkSizeWarningLimit: 1024 },
+    // /llms.txt (index), /llms-full.txt (every page) and a .md copy of each page, for AI agents.
+    plugins: [
+      llmstxt({
+        domain: 'https://record-api-docs.vercel.app',
+        title: 'Record API',
+        description: 'Config-driven REST API for Laravel: CRUD, bulk, upsert, RPC functions, audit logging and OpenAPI from table configuration.',
+      }),
+    ],
+  },
   themeConfig: {
     logo: '/logo.svg',
     nav: [

@@ -63,8 +63,8 @@ export const filePages = [
   { path: 'reference/api', title: 'API Reference', source: 'docs/api-documentation.md' },
   { path: 'reference/audit-logging', title: 'Audit Logging', source: 'docs/audit-interface.md' },
   { path: 'reference/changelog', title: 'Changelog', source: 'CHANGELOG.md' },
-  { path: 'ai/backend', title: 'Backend Agent Context', source: 'docs/SKILL.md' },
-  { path: 'ai/frontend', title: 'Frontend Agent Context', source: 'docs/SKILL-FRONTEND.md' },
+  { path: 'ai/backend', title: 'Backend Agent Context', source: 'resources/boost/skills/record-api/SKILL.md' },
+  { path: 'ai/frontend', title: 'Frontend Agent Context', source: 'resources/boost/skills/record-api-frontend/SKILL.md' },
 ]
 
 export const sidebar = [
