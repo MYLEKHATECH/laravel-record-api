@@ -263,7 +263,7 @@ Disable per table: `disableCache: true`.
 RPC functions control cache TTL via `cacheTTL` and invalidation via `clearCacheTables`.
 
 Full filter/operator reference and compatibility notes:
-- `docs/api-documentation.md` (Filter Operators and Grouped Logic sections)
+- https://record-api-docs.vercel.app/reference/api (Filter Operators and Grouped Logic sections)
 
 ### 5. Zero-code multi-tenancy
 
@@ -965,7 +965,7 @@ record-api:clean-audit-logs            purge expired audit records
 
 ```
 success:    bool
-error_code: int      — 0 = ok; see SKILL-FRONTEND.md for full table
+error_code: int      — 0 = ok; see the record-api-frontend skill for the full table
 data:       object | array
 meta:       { request_id, page, per_page, total }
 message:    string   — errors only

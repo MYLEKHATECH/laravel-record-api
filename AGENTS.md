@@ -36,7 +36,8 @@ Run `composer test` before finishing any change. Run a single file with `vendor/
 | `config/` | `record.php`, `record-api.php`, `audit.php` (published to the host app) |
 | `routes/` | `api.php` (record API), `web.php` (`/api-docs` UI and login) |
 | `tests/Feature`, `tests/Unit` | PHPUnit; base class `tests/TestCase.php` |
-| `docs/` | Markdown docs; `SKILL.md` / `SKILL-FRONTEND.md` are agent skills for apps using the package |
+| `docs/` | Markdown docs (not shipped in the Composer package) |
+| `resources/boost/` | AI guidelines and skills shipped to apps: `guidelines/core.md` (always loaded) and `skills/record-api`, `skills/record-api-frontend`. Laravel Boost installs them; the docs site shows the skills |
 | `website/` | VitePress docs site built from `README.md` and `docs/` (https://record-api-docs.vercel.app) |
 
 ## Contracts you must not break
@@ -68,7 +69,7 @@ Run `composer test` before finishing any change. Run a single file with `vendor/
 
 1. Add or update a test in `tests/Feature` (HTTP or service behaviour) or `tests/Unit` (pure logic).
    Tests use the `/** @test */` style of the surrounding files.
-2. Keep `README.md`, `docs/api-documentation.md` and `docs/SKILL*.md` in step with behaviour.
+2. Keep `README.md`, `docs/api-documentation.md` and `resources/boost/` in step with behaviour.
    A new `## ` section in `README.md` must also be mapped in `website/pages.mjs`, or the docs build fails.
 3. If the change is user-visible, add it under `## [Unreleased]` in `CHANGELOG.md`.
 

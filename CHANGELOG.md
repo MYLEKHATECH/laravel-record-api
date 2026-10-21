@@ -4,6 +4,10 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- AI guidelines and skills for apps using the package, shipped in `resources/boost`: `guidelines/core.md` plus the `record-api` (backend) and `record-api-frontend` (API consumer) skills. With [Laravel Boost](https://github.com/laravel/boost), `php artisan boost:install` offers them under third-party packages. The skills moved here from `docs/SKILL.md` and `docs/SKILL-FRONTEND.md`, which were not included in the Composer package.
+- The documentation site publishes https://record-api-docs.vercel.app/llms.txt, `/llms-full.txt` and a Markdown copy of every page for AI agents.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

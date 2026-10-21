@@ -23,6 +23,12 @@ php artisan migrate
 curl -X GET http://your-app.test/api/v1/users
 ```
 
+### AI Assistants
+
+The package ships AI guidelines and skills in `resources/boost`. With [Laravel Boost](https://github.com/laravel/boost) installed, run `php artisan boost:install` (or `boost:update`) and select `mylekha/record-api`: your coding assistant then learns how to configure tables, hooks and functions, and how to call the API.
+
+Agents calling a running app can read `/{api_prefix}/docs/llms.txt` and the OpenAPI spec at `/{api_prefix}/docs/openapi.json`. The documentation itself is available to agents at https://record-api-docs.vercel.app/llms.txt.
+
 ## ✨ Features
 
 - **🔄 Dynamic API Controller**: Full CRUD operations for any database table with advanced filtering
