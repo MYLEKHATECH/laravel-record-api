@@ -41,7 +41,7 @@
         <env name="SESSION_DRIVER" value="array"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         
-        <!-- SP Laravel API specific settings -->
+        <!-- Record API specific settings -->
         <env name="RECORD_API_PREFIX" value="api"/>
         <env name="RECORD_CACHE_TTL" value="3600"/>
         <env name="RECORD_LAZY_CACHE_TTL" value="300"/>

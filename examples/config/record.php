@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Example Record Configuration for SP Laravel API
+ * Example Record Configuration for Record API
  * 
  * This file demonstrates how to configure your database tables
  * for the dynamic API functionality.

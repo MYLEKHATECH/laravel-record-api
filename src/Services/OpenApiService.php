@@ -44,7 +44,7 @@ class OpenApiService
         $globalFunctionCount = count(RecordConfigService::globalFunctions());
 
         return <<<MDX
-# SP Laravel API Agent Contract
+# Record API Agent Contract
 
 This API is private/internal. Prefer OpenAPI as the source of truth.
 

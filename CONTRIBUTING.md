@@ -1,6 +1,6 @@
-# Contributing to SP Laravel Unified API
+# Contributing to Record API
 
-Thank you for considering contributing to SP Laravel Unified API! This document provides guidelines and information for contributors.
+Thank you for considering contributing to Record API! This document provides guidelines and information for contributors.
 
 ## 🚀 Getting Started
 
@@ -343,8 +343,8 @@ We are committed to providing a welcoming and inclusive environment. Please:
 
 ## 📄 License
 
-By contributing to SP Laravel API, you agree that your contributions will be licensed under the project's proprietary license.
+By contributing to Record API, you agree that your contributions will be licensed under the MIT License.
 
 ---
 
-Thank you for contributing to SP Laravel API!
+Thank you for contributing to Record API!

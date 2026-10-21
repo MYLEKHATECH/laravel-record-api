@@ -13,11 +13,11 @@ class SetupPackageCommand extends Command
 {
     protected $signature = 'record-api:setup {--force : Overwrite existing configs}';
 
-    protected $description = 'Setup SP Laravel API package: publish configs and create record/audit configurations using config/record.php + config/records/tables/*.php + config/records/globalFunctions/*.php.';
+    protected $description = 'Setup Record API package: publish configs and create record/audit configurations using config/record.php + config/records/tables/*.php + config/records/globalFunctions/*.php.';
 
     public function handle(): int
     {
-        $this->info('Setting up SP Laravel API package...');
+        $this->info('Setting up Record API package...');
         $this->newLine();
 
         // Publish package config
