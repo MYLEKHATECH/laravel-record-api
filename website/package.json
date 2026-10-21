@@ -1,0 +1,15 @@
+{
+  "name": "record-api-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync.mjs",
+    "dev": "node scripts/sync.mjs && vitepress dev",
+    "build": "node scripts/sync.mjs && vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4",
+    "vue": "3.5.44"
+  }
+}
