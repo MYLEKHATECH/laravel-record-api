@@ -1,3 +1,8 @@
+---
+name: record-api
+description: Use when working on a Laravel app that uses mylekha/record-api — adding tables or modules, configuring RecordTableType, relationships, RPC functions, validators, lifecycle hooks or audit logging, or understanding how the package works.
+---
+
 # Agent Context: mylekha/record-api (Backend / Laravel)
 
 ## What This Package Is
@@ -247,13 +252,13 @@ Every `GET /{table}` supports out of the box:
 ?vendor_id=eq.27&or=(balance_due.gt.0,id.eq.5) grouped OR/AND expressions
 ?sortby=price&order=desc                   sorting
 ?page=2&per_page=25                        pagination
+?limit=50                                  first rows, no paging
 ?aggregate=count,sum:price&group_by=status aggregation + group by
-?with=invoices,contacts                    legacy eager load
 ```
 
-### 4. Automatic query caching
+### 4. Query caching
 
-Queries are cached automatically per table. Invalidated on any write to that table.
+With `RECORD_API_CACHE_API=true`, list and record queries are cached per table and invalidated on every write to that table (caching is off by default).
 Disable per table: `disableCache: true`.
 RPC functions control cache TTL via `cacheTTL` and invalidation via `clearCacheTables`.
 
@@ -327,15 +332,21 @@ new RecordTableType(
     canCreate:           true,         // expose POST
     canUpdate:           true,         // expose PUT / PATCH
     canDelete:           true,         // expose DELETE / restore / force
+    canUpsert:           true,         // expose POST /upsert and /bulk/upsert
 
-    // Public access — bypasses authentication
-    public:              ['read'],     // 'read' | 'write'; omit = all endpoints require auth
+    // Authentication — false skips the auth and permission check for that action group
+    isAuthRead:          true,         // list / show
+    isAuthWrite:         true,         // create / update / delete / upsert
+    // Equivalent older form: public: new RecordTablePublic(read: true, write: false)
 
     // Features
     softDeletes:         true,         // enables soft-delete, restore, force-delete
-    hasTenantId:         true,         // auto-filters all queries by X-Tenant-ID header
+    hasTenantId:         true,         // filter by the tenant header (needs record.enable_tenant_id)
     disableCache:        false,        // skip query caching for this table
     disableAuditLog:     false,        // skip audit trail for this table
+    uniqueIds:           ['uuid'],     // server-generated UUIDv7 on every insert; never changed by updates
+    overrideTimestamps:  false,        // true = keep a client-sent updated_at (created_at is always kept if sent)
+    overrideUserstamps:  false,        // true = keep client-sent created_by / updated_by
 
     // Column control
     columnHiddens:       ['cost_price'],       // never returned in responses
@@ -380,20 +391,22 @@ new RecordTableType(
     // Composed config (detailed below)
     relationships:       [...],
     functions:           [...],
-    createValidator:     fn(Request $request, ?int $id): Validator => ...,
-    updateValidator:     fn(Request $request, ?int $id): Validator => ...,
-    deleteValidator:     fn(Request $request, ?int $id): Validator => ...,
-    beforeRead:          fn(Request $request, string $table): Request|null => ...,
-    afterRead:           fn(Request $request, string $table, mixed $results): void => ...,
-    beforeCreate:        fn(Request $request, string $table): Request|array|null => ...,
-    afterCreate:         fn(Request $request, string $table, mixed $record): void => ...,
-    beforeUpdate:        fn(Request $request, string $table, mixed $record): Request|array|null => ...,
-    afterUpdate:         fn(Request $request, string $table, mixed $record): void => ...,
-    beforeDelete:        fn(Request $request, string $table, mixed $record): Request|array|null => ...,
-    afterDelete:         fn(Request $request, string $table, mixed $record): void => ...,
-    beforeRestore:       fn(Request $request, string $table, mixed $record): Request|array|null => ...,
-    afterRestore:        fn(Request $request, string $table, mixed $record): void => ...,
-    customAuditLog:      fn($event, $entityClass, array $data, $tenantId, $ctx): void => ...,
+    createValidator:     fn(Request $request, $id): Validator => ...,   // closures are fine here
+    updateValidator:     fn(Request $request, $id): Validator => ...,
+    deleteValidator:     fn(Request $request, $id): Validator => ...,
+
+    // Hooks are static class methods, never closures (see Lifecycle Triggers)
+    beforeRead:          new RecordTableTriggerType(class: ProductHooks::class, functionName: 'beforeRead'),
+    afterRead:           ...,
+    beforeCreate:        new RecordTableTriggerType(class: ProductHooks::class, functionName: 'beforeCreate'),
+    afterCreate:         ...,
+    beforeUpdate:        ...,
+    afterUpdate:         ...,
+    beforeDelete:        ...,
+    afterDelete:         ...,
+    beforeRestore:       ...,
+    afterRestore:        ...,
+    customAuditLog:      [InvoiceAuditLogger::class, 'handle'],   // or 'Class@method'
 );
 ```
 
@@ -518,10 +531,11 @@ new RecordSpatiePermissionType(name: 'roles', type: 'roles', guardName: 'api')
 
 ## Validators
 
-Run before create / update / delete. Return a Laravel `Validator` instance.
-Failure → `error_code: 10004`, HTTP 422. Bulk operations bypass validators.
+Run before create / update / delete. Return a Laravel `Validator` instance (closures are fine).
+Failure → `error_code: 10004`, HTTP 422.
+Bulk endpoints run the default schema validation and the before-hooks per row, but not `createValidator` / `updateValidator`.
 
-Signature: `fn(Request $request, ?int $id): \Illuminate\Validation\Validator`
+Signature: `fn(Request $request, $id): \Illuminate\Validation\Validator` (`$id` is `null` on create)
 
 ```php
 createValidator: fn($request, $id) => Validator::make($request->all(), [
@@ -539,33 +553,61 @@ updateValidator: fn($request, $id) => Validator::make($request->all(), [
 
 ## Lifecycle Triggers
 
-| Hook           | Fires                  | Extra args  | Can return              |
-|----------------|------------------------|-------------|-------------------------|
-| `beforeRead`   | Before list/get query  | —           | `Request\|null`         |
-| `afterRead`    | After list/get         | `$results`  | `void`                  |
-| `beforeCreate` | Before INSERT          | —           | `Request\|array\|null`  |
-| `afterCreate`  | After INSERT           | `$record`   | `void`                  |
-| `beforeUpdate` | Before UPDATE          | `$record`   | `Request\|array\|null`  |
-| `afterUpdate`  | After UPDATE           | `$record`   | `void`                  |
-| `beforeDelete`  | Before DELETE          | `$record`   | `Request\|array\|null`  |
-| `afterDelete`   | After DELETE           | `$record`   | `void`                  |
-| `beforeRestore` | Before RESTORE         | `$record`   | `Request\|array\|null`  |
-| `afterRestore`  | After RESTORE          | `$record`   | `void`                  |
-
-Signature: `fn(Request $request, string $table, ...$args): Request|array|null`
+Hooks are **static methods on a class**, registered with `RecordTableTriggerType` (or an array of them, run in order).
+A closure is rejected with a `TypeError`.
 
 ```php
-beforeCreate: function (Request $request, string $table): Request {
-    $request->merge(['created_by' => auth()->id()]);
-    return $request;
-},
-afterUpdate: function (Request $request, string $table, $record): void {
-    cache()->forget("product:{$record->id}");
-},
-beforeDelete: function (Request $request, string $table, $record): void {
-    abort_if($record->has_active_orders, 422, 'Cannot delete with active orders');
-},
+use Mylekha\RecordApi\Types\RecordTableTriggerType;
+
+beforeCreate: new RecordTableTriggerType(class: ProductHooks::class, functionName: 'beforeCreate'),
 ```
+
+Every hook is called as `ProductHooks::method(Request $request, string $table, array $context)`.
+
+| Hook | Fires | `$context` keys |
+|------|-------|-----------------|
+| `beforeRead` / `afterRead` | list and show | `type` (`index` or `show`), `id` (show), tenant column; after list also `data`, `filters` |
+| `beforeCreate` | before INSERT | tenant column |
+| `beforeUpdate` | before UPDATE | `id`, tenant column |
+| `beforeDelete` / `beforeRestore` | before DELETE / RESTORE | `id`, tenant column, `record` (the current row) |
+| `afterCreate` / `afterUpdate` / `afterDelete` / `afterRestore` | after the write | `id`, `payload` or `record`, and the result flags (`updated`, `deleted`, …) |
+
+What a **before** hook may return:
+
+| Return | Effect |
+|--------|--------|
+| `null` | continue unchanged |
+| `Request` | continue with this request |
+| `array` | merged into the request, then continue |
+| `JsonResponse` | **stop** and send it (wrapped in the standard envelope if it is not already) |
+
+To reject a write, return a response. Do not throw or `abort()`: anything thrown from a hook becomes a generic `500`.
+
+```php
+class ProductHooks
+{
+    public static function beforeCreate(Request $request, string $table, array $context): ?array
+    {
+        return ['created_by' => auth()->id()];               // merged into the request
+    }
+
+    public static function beforeDelete(Request $request, string $table, array $context): ?JsonResponse
+    {
+        if ($context['record']->has_active_orders ?? false) {
+            return RecordApiResponseService::errorWrapped('Cannot delete with active orders', 422);
+        }
+
+        return null;
+    }
+
+    public static function afterUpdate(Request $request, string $table, array $context): void
+    {
+        cache()->forget("product:{$context['id']}");
+    }
+}
+```
+
+Hooks for every table go in `config('record.global_triggers')`, keyed by hook name, with the same signature. A global before-hook runs before the table's own; a global after-hook runs after it.
 
 ---
 
@@ -913,7 +955,7 @@ record-api:record {table}              scaffold table config class
 record-api:sync-record-columns         sync DB schema → column metadata
 record-api:sync-record-columns --force --table=x
 record-api:setup                       publish configs and migrations
-record-api:validate-setup --fix        validate installation, auto-repair
+record-api:validate --fix              validate installation, auto-repair
 record-api:clean-audit-logs            purge expired audit records
 ```
 
@@ -934,10 +976,15 @@ Note: key is `error_code` (snake_case); meta uses `page` not `current_page`.
 
 ---
 
-## Environment Variable
+## Environment Variables
 
 ```
-RECORD_API_AUTH_GUARD=api    # api | web | sanctum | jwt
+RECORD_API_AUTH_GUARD=api          # auth guard: api | web | sanctum | jwt …
+RECORD_API_CACHE_API=false         # query caching (off by default)
+RECORD_API_CACHE_API_TTL=3600
+RECORD_API_DOCS_PRIVATE=false      # true = /api-docs needs a login
+RECORD_API_DEBUG=false             # include debug details in error responses
+RECORD_API_AUDIT_LOG_ENABLED=false # audit logging; see config/audit.php for the rest
 ```
 
 ---

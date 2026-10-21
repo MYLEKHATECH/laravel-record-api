@@ -8,6 +8,7 @@ use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
 use Mylekha\RecordApi\Utilities\RelationshipResolverUtils;
 use Mylekha\RecordApi\Constants\HttpErrorCodeConstant;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 
 class OpenApiService
 {
@@ -42,35 +43,61 @@ class OpenApiService
 
         $tableCount = count(RecordConfigService::getTableConfig());
         $globalFunctionCount = count(RecordConfigService::globalFunctions());
+        $perPageMax = RecordConfigService::perPageMax();
+        $limitMax = RecordConfigService::limitMax();
+        $bulkMax = RecordConfigService::bulkMax();
+        $appName = trim((string) config('app.name'));
+        $title = $appName !== '' ? $appName . ' API' : 'Record API';
+
+        $tenantLine = RecordConfigService::enableTenantId()
+            ? sprintf('- Tenant: send `%s: <tenant-id>` on tables that are tenant-scoped (they declare the header in OpenAPI); rows are filtered by `%s`.', $tenantHeader, $tenantColumn)
+            : '- Tenant: not used by this API.';
 
         return <<<MDX
-# Record API Agent Contract
+# {$title}: Agent Contract
 
-This API is private/internal. Prefer OpenAPI as the source of truth.
+How to call this API correctly. The OpenAPI schema is the source of truth; this page explains the conventions it does not spell out.
 
 ## OpenAPI
 
 - Schema URL: {$openApiUrl}
 - Content-Type: application/vnd.oai.openapi+json
-- Auth: Bearer token
-- Tenant header: {$tenantHeader} (maps to {$tenantColumn})
+- Every operation has a stable `operationId` (e.g. `listInvoices`, `createInvoices`, `getInvoices`); use it as the tool or function name.
+- Fields: `components.schemas.<Table>Write` for request bodies, `<Table>Read` for responses. Relationships are described in each operation's `description`.
 
-## Key Notes
+## Auth and Headers
 
-- OpenAPI schema is the only source of truth for modules, fields, and relationships.
-- Do not duplicate or hardcode relationship details from this MDX document.
-- Read relationship metadata from `paths` + `components.schemas` in OpenAPI.
-- If OpenAPI and any prose differ, always follow OpenAPI.
+- Auth: endpoints the application protects expect `Authorization: Bearer <token>`. A `401` with `error_code` `10002` means the token is missing or invalid.
+{$tenantLine}
 
 ## Endpoint Patterns
 
-- List: /{$apiPrefix}/{table}
-- Detail: /{$apiPrefix}/{table}/{id}
+- List: GET /{$apiPrefix}/{table}
+- Detail: GET /{$apiPrefix}/{table}/{id}
 - Create: POST /{$apiPrefix}/{table}
 - Update: PUT|PATCH /{$apiPrefix}/{table}/{id}
 - Delete: DELETE /{$apiPrefix}/{table}/{id}
+- Restore (soft-deleted): POST /{$apiPrefix}/{table}/{id}/restore
+- Upsert: POST /{$apiPrefix}/{table}/upsert?match_on=<column>
+- Bulk: POST /{$apiPrefix}/{table}/bulk/create | bulk/update | bulk/delete | bulk/upsert (at most {$bulkMax} items)
 - Global RPC: {$globalRpcPattern}
 - Table RPC: {$tableRpcPattern}
+
+Not every table allows every operation: if a path or method is missing from OpenAPI, it is not available.
+
+## Query Parameters (list endpoints)
+
+- Filter: `?<column>=<operator>.<value>`, e.g. `status=eq.paid`, `total=gte.100`, `id=in.(1,2,3)`; several filters are combined with AND. Group with `or=(a.eq.1,b.gt.2)`.
+- Search: `?s=<text>` across the table's searchable columns.
+- Columns and relations: `?select=id,name,customer:customers(id,name)`.
+- Sort: `?sortby=<column>&order=asc|desc` (default `desc`).
+- Pages: `?page=1&per_page=25` (max {$perPageMax}); or `?limit=50` (max {$limitMax}) for the first rows without paging.
+
+## Responses
+
+- Success: `{"success": true, "error_code": 0, "data": ..., "meta": {"request_id": "...", ...}}`; paged lists add `meta.page`, `meta.per_page` and `meta.total`.
+- Error: `{"success": false, "error_code": <int>, "message": "...", "errors": {...}, "meta": {"request_id": "..."}}`; `422` validation errors list fields in `errors`.
+- Branch on `error_code`, not on `message`. Quote `meta.request_id` when reporting a failure.
 
 ## Runtime Snapshot
 
@@ -79,10 +106,10 @@ This API is private/internal. Prefer OpenAPI as the source of truth.
 
 ## Agent Rules
 
-- Do not invent fields or endpoints.
-- Generate frontend types and API clients from OpenAPI schema URL.
-- Use error_code and message from API responses for UI handling.
-- Respect tenant header and auth on every request.
+- Do not invent tables, fields or endpoints; read them from OpenAPI.
+- Send only fields from the `Write` schema; never send `id`, timestamps or the tenant column in a body.
+- Prefer one request with `select` relations over many requests.
+- Confirm with the user before delete, force delete, bulk or upsert writes.
 MDX;
     }
 
@@ -127,7 +154,7 @@ MDX;
                 'type' => 'http',
                 'scheme' => 'bearer',
                 'bearerFormat' => 'JWT',
-                'description' => 'Use `Authorization: Bearer <token>` - Internal team access only',
+                'description' => 'Use `Authorization: Bearer <token>` on endpoints the application protects',
             ],
         ];
 
@@ -153,10 +180,11 @@ This API provides **unified access** to all tables through a single endpoint pat
 
 ## 🔑 Authentication
 
-All endpoints require a valid API token in the `Authorization` header:
+Endpoints the application protects with an auth middleware expect a token in the `Authorization` header:
 ```
 Authorization: Bearer <your-api-token>
 ```
+A protected endpoint called without a valid token returns `401` with `error_code` `10002`.
 
 ## Error Code
 
@@ -331,12 +359,10 @@ Full relationship examples and payload guides: https://record-api-docs.vercel.ap
 - **Validation**: Only allows columns that exist in table schema
 
 ### Pagination
-- **Traditional**: `page=1&per_page=25` (offset-based for small datasets)
-- **Cursor-Based**: `cursor=12345&direction=next` (high-performance for large datasets)
-- **Auto-Detection**: Automatically switches to cursor pagination for tables >10,000 rows
-- **Custom Cursor**: `cursor_column=created_at` (use different cursor column)
-- **Composite**: `composite_cursor=true&sortby=created_at` (multi-column cursors)
-- **Limits**: `per_page` max 100, default 25
+- **Pages**: `page=2&per_page=25` returns `meta.page`, `meta.per_page` and `meta.total`, plus `X-Page`, `X-Per-Page`, `X-Total-Pages` and `X-Total-Count` headers
+- **Limit**: `limit=50` returns the first 50 rows without paging (`meta.total` is the number returned)
+- **Neither**: returns up to ' . RecordConfigService::limitMax() . ' rows with `meta.total`
+- **Limits**: `per_page` is capped at ' . RecordConfigService::perPageMax() . ' and `limit` at ' . RecordConfigService::limitMax() . '
 
 ### Bulk Operations (Available for All Tables)
 
@@ -413,34 +439,68 @@ Accepts an array of IDs or an array of objects with the primary key.
 ```
 
 ### Performance Optimization
-- **Lazy Loading**: `lazy=true` for complex queries
-- **Smart Caching**: Automatic request caching
-- **Cursor Pagination**: Efficient for large datasets
-- **Query Optimization**: Operations prioritized by speed
+- **Paging**: request only what you show with `page`/`per_page` or `limit`
+- **Column selection**: `select=` only the columns you need
+- **Caching**: list responses may be cached when the application enables query caching
 
 ## 🎯 Quick Tips
 
 - Use `select` to limit returned columns for better performance
-- Add `lazy=true` for complex queries with multiple filters
 - Embed relationships instead of making separate API calls
-- Use cursor pagination (`cursor`) for large datasets',
+- Page large lists with `page` and `per_page`',
                 'contact' => [
                     'name' => config('app.name') . ' Development Team',
                     'email' => config('app.email'),
                 ],
-                'license' => [
-                    'name' => 'Proprietary - Internal Use Only',
-                ],
             ],
             'servers' => $servers,
             'tags' => self::tags($tables, $globalFunctions),
-            'paths' => $paths + self::rpcPaths($tables, $globalFunctions),
+            'paths' => self::withUniqueOperationIds($paths + self::rpcPaths($tables, $globalFunctions)),
             'components' => [
                 'schemas' => $schemas,
                 'securitySchemes' => $securitySchemes,
             ],
             'security' => [['bearerAuth' => []]],
         ];
+    }
+
+    /**
+     * Stable operationId for a table operation, e.g. listInvoiceItems.
+     * Code generators and AI tool callers use it as the operation's name.
+     */
+    private static function operationId(string $action, string $recordName): string
+    {
+        return $action . preg_replace('/[^A-Za-z0-9]/', '', Str::studly($recordName));
+    }
+
+    /**
+     * OpenAPI requires operationIds to be unique; record names such as
+     * `invoice_items` and `invoice-items` map to the same id, so later
+     * duplicates get a numeric suffix.
+     */
+    private static function withUniqueOperationIds(array $paths): array
+    {
+        $seen = [];
+        foreach ($paths as $path => $operations) {
+            foreach ($operations as $method => $operation) {
+                if (!is_array($operation)) {
+                    continue;
+                }
+                if (!isset($operation['operationId'])) {
+                    continue;
+                }
+                $id = $operation['operationId'];
+                $suffix = 2;
+                while (isset($seen[$id])) {
+                    $id = $operation['operationId'] . $suffix++;
+                }
+
+                $seen[$id] = true;
+                $paths[$path][$method]['operationId'] = $id;
+            }
+        }
+
+        return $paths;
     }
 
     private static function schemaName(string $table): string
@@ -658,6 +718,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                 'get' => $canRead ? [
                     'tags' => [$formattedRecordName],
                     'summary' => 'List ' . $formattedRecordName,
+                    'operationId' => self::operationId('list', $recordName),
                     'description' => "Retrieve {$recordName} records with comprehensive query capabilities:\n\n**Advanced Filtering:** Multiple operators ([Filter](#description/-getting-started))\n\n{$relationshipDescription}",
                     'responses' => [
                         '200' => [
@@ -697,6 +758,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                 'post' => $canCreate ? [
                     'tags' => [$formattedRecordName],
                     'summary' => 'Create ' . $recordName,
+                    'operationId' => self::operationId('create', $recordName),
                     'description' => "Create a new {$recordName} record with comprehensive validation:\n\n**Advanced Validation:** Multiple rules ([Validation](#description/-getting-started))\n\n{$relationshipDescription}",
                     'requestBody' => [
                         'required' => true,
@@ -754,6 +816,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                     'post' => [
                         'tags' => [$formattedRecordName],
                         'summary' => 'Upsert ' . $formattedRecordName,
+                        'operationId' => self::operationId('upsert', $recordName),
                         'description' => "Create or update a {$recordName} record based on match_on columns.\n\n{$relationshipDescription}",
                         'requestBody' => [
                             'required' => true,
@@ -829,6 +892,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                     'post' => [
                         'tags' => [$formattedRecordName],
                         'summary' => 'Bulk Upsert ' . $formattedRecordName,
+                        'operationId' => self::operationId('bulkUpsert', $recordName),
                         'description' => "Bulk create or update {$recordName} records based on match_on columns.\n\n{$relationshipDescription}",
                         'requestBody' => [
                             'required' => true,
@@ -906,6 +970,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                 'get' => $canRead ? [
                     'tags' => [$formattedRecordName],
                     'summary' => sprintf('Get %s by ID', $recordName),
+                    'operationId' => self::operationId('get', $recordName),
                     'responses' => [
                         '200' => [
                             'description' => 'Successful response',
@@ -958,6 +1023,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                 'put' => $canUpdate ? [
                     'tags' => [$formattedRecordName],
                     'summary' => 'Update ' . $formattedRecordName,
+                    'operationId' => self::operationId('update', $recordName),
                     'description' => "Update an existing {$recordName} record with comprehensive validation:\n\n**Advanced Validation:** Multiple rules ([Validation](#description/-getting-started))\n\n{$relationshipDescription}",
                     'requestBody' => [
                         'required' => true,
@@ -1017,6 +1083,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                 'delete' => $canDelete ? [
                     'tags' => [$formattedRecordName],
                     'summary' => 'Delete ' . $formattedRecordName,
+                    'operationId' => self::operationId('delete', $recordName),
                     'responses' => [
                         '200' => [
                             'description' => 'Deleted',
@@ -1083,6 +1150,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                     'post' => [
                         'tags' => [$formattedRecordName],
                         'summary' => 'Restore ' . $formattedRecordName,
+                        'operationId' => self::operationId('restore', $recordName),
                         'responses' => [
                             '200' => [
                                 'description' => 'Restored',
@@ -1132,6 +1200,7 @@ Accepts an array of IDs or an array of objects with the primary key.
                     'delete' => [
                         'tags' => [$formattedRecordName],
                         'summary' => 'Force delete ' . $formattedRecordName,
+                        'operationId' => self::operationId('forceDelete', $recordName),
                         'responses' => [
                             '200' => [
                                 'description' => 'Deleted',

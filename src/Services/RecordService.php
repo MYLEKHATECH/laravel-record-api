@@ -1846,8 +1846,7 @@ class RecordService
      *     meta: array,
      *     headers: array,
      *     filters: array,
-     *     request: Request,
-     *     cursor_meta: mixed
+     *     request: Request
      * }
      */
     public static function applyRequestFilters(Request $request, Builder|RecordTableType|string $tableOrBuilder, ?string $tanentColumn = '', bool $isArray = true, string $orderBy = 'id'): array

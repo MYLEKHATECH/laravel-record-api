@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mylekha\RecordApi\Services\RecordService;
+use Mylekha\RecordApi\Utilities\RelationshipResolverUtils;
 use Mylekha\RecordApi\Utilities\SchemaRegistryUtils;
 use Mylekha\RecordApi\Tests\TestCase;
 use Mylekha\RecordApi\Types\RecordMetaHasManyThroughType;
@@ -127,5 +128,19 @@ class MetaHasManyThroughTest extends TestCase
 
         $this->assertCount(1, $package2->modules);
         $this->assertSame('Module 2', $package2->modules[0]->name);
+    }
+
+    public function test_meta_has_many_through_links_a_module_given_as_a_bare_id(): void
+    {
+        $moduleId1 = DB::table('modules')->where('name', 'Module 1')->value('id');
+        $packageId2 = DB::table('packages')->where('name', 'Package 2')->value('id');
+
+        RelationshipResolverUtils::processRelatedData('packages', ['modules' => [$moduleId1]], $packageId2, null, 'update');
+
+        $this->assertTrue(DB::table('meta')->where([
+            'owner' => 'package',
+            'owner_id' => $packageId2,
+            'target_id' => $moduleId1,
+        ])->exists());
     }
 }

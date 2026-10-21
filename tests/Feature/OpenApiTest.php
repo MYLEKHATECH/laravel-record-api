@@ -137,4 +137,77 @@ class OpenApiTest extends TestCase
         $this->assertStringContainsString('Payload examples', $createDescription);
         $this->assertStringContainsString('#relationship-write-payload-guide', $createDescription);
     }
+
+    /** @test */
+    public function it_gives_every_table_operation_a_stable_operation_id(): void
+    {
+        Config::set('record.api_prefix', 'api/v2');
+        Config::set('record.tables', [
+            'invoice_items' => new RecordTableType(
+                table: 'invoice_items',
+                softDeletes: true,
+                columns: ['id' => ['type' => 'bigint', 'nullable' => false]],
+            ),
+        ]);
+
+        $paths = (new OpenApiService())->generateInternal()['paths'];
+
+        $this->assertSame('listInvoiceItems', $paths['/api/v2/invoice_items']['get']['operationId']);
+        $this->assertSame('createInvoiceItems', $paths['/api/v2/invoice_items']['post']['operationId']);
+        $this->assertSame('getInvoiceItems', $paths['/api/v2/invoice_items/{id}']['get']['operationId']);
+        $this->assertSame('updateInvoiceItems', $paths['/api/v2/invoice_items/{id}']['put']['operationId']);
+        $this->assertSame('deleteInvoiceItems', $paths['/api/v2/invoice_items/{id}']['delete']['operationId']);
+        $this->assertSame('restoreInvoiceItems', $paths['/api/v2/invoice_items/{id}/restore']['post']['operationId']);
+        $this->assertSame('forceDeleteInvoiceItems', $paths['/api/v2/invoice_items/{id}/force']['delete']['operationId']);
+        $this->assertSame('upsertInvoiceItems', $paths['/api/v2/invoice_items/upsert']['post']['operationId']);
+        $this->assertSame('bulkUpsertInvoiceItems', $paths['/api/v2/invoice_items/bulk/upsert']['post']['operationId']);
+    }
+
+    /** @test */
+    public function it_keeps_operation_ids_unique_when_record_names_collide(): void
+    {
+        Config::set('record.api_prefix', 'api/v2');
+        Config::set('record.tables', [
+            'invoice_items' => new RecordTableType(
+                table: 'invoice_items',
+                columns: ['id' => ['type' => 'bigint', 'nullable' => false]],
+            ),
+            'invoice-items' => new RecordTableType(
+                table: 'invoice_items',
+                columns: ['id' => ['type' => 'bigint', 'nullable' => false]],
+            ),
+        ]);
+
+        $operationIds = [];
+        foreach ((new OpenApiService())->generateInternal()['paths'] as $operations) {
+            foreach ($operations as $operation) {
+                if (is_array($operation) && isset($operation['operationId'])) {
+                    $operationIds[] = $operation['operationId'];
+                }
+            }
+        }
+
+        $this->assertSame($operationIds, array_unique($operationIds));
+        $this->assertContains('listInvoiceItems', $operationIds);
+        $this->assertContains('listInvoiceItems2', $operationIds);
+    }
+
+    /** @test */
+    public function it_describes_the_configured_api_in_the_agent_contract(): void
+    {
+        Config::set('record.api_prefix', 'api/v2');
+        Config::set('record.tables', []);
+        Config::set('record.enable_tenant_id', false);
+
+        $contract = OpenApiService::generateLlmMdx();
+
+        $this->assertStringContainsString('operationId', $contract);
+        $this->assertStringContainsString('Tenant: not used by this API.', $contract);
+        $this->assertStringNotContainsString('private/internal', $contract);
+
+        Config::set('record.enable_tenant_id', true);
+        Config::set('record.tenant_header', 'X-Tenant-ID');
+
+        $this->assertStringContainsString('`X-Tenant-ID: <tenant-id>`', OpenApiService::generateLlmMdx());
+    }
 }

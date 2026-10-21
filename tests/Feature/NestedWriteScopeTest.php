@@ -161,6 +161,28 @@ class NestedWriteScopeTest extends TestCase
     }
 
     /** @test */
+    public function it_attaches_a_tag_given_as_a_bare_id(): void
+    {
+        $mine = $this->item(self::MINE);
+        $tag = DB::table('tags')->insertGetId(['name' => 'mine', 'company_id' => self::MINE]);
+
+        $this->write($mine, ['tags' => [$tag]]);
+
+        $this->assertTrue(DB::table('item_tags')->where(['item_id' => $mine, 'tag_id' => $tag])->exists());
+    }
+
+    /** @test */
+    public function it_does_not_attach_another_companys_tag_given_as_a_bare_id(): void
+    {
+        $mine = $this->item(self::MINE);
+        $foreignTag = DB::table('tags')->insertGetId(['name' => 'theirs', 'company_id' => self::OTHER]);
+
+        $this->write($mine, ['tags' => [$foreignTag]]);
+
+        $this->assertFalse(DB::table('item_tags')->where(['item_id' => $mine, 'tag_id' => $foreignTag])->exists());
+    }
+
+    /** @test */
     public function it_does_not_attach_another_companys_tag(): void
     {
         $mine = $this->item(self::MINE);
