@@ -224,6 +224,7 @@ GET /' . $apiPrefix . '/products?price=between.100,1000
 ```
 
 ### Documentation References
+- Package docs: https://record-api-docs.vercel.app
 - Runtime OpenAPI JSON: /' . $apiPrefix . '/docs/openapi.json
 - Runtime API docs UI: /' . $apiPrefix . '/docs
 - Full Markdown guide: docs/api-documentation.md
@@ -319,6 +320,8 @@ This section describes payload format for write endpoints (`POST`, `PUT`, `PATCH
   "roles": [1, {"id": 2}]
 }
 ```
+
+Full relationship examples and payload guides: https://record-api-docs.vercel.app/reference/api
 
 ### Ordering & Sorting
 - **Basic**: `sortby=name&order=asc` (sort by column)

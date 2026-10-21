@@ -12,6 +12,7 @@
   "homepage": "https://github.com/MYLEKHATECH/laravel-record-api",
   "support": {
     "issues": "https://github.com/MYLEKHATECH/laravel-record-api/issues",
+    "docs": "https://record-api-docs.vercel.app",
     "source": "https://github.com/MYLEKHATECH/laravel-record-api"
   },
   "type": "library",
