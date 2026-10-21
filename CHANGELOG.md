@@ -4,6 +4,18 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-21
+
+### Changed
+- The API docs page (`/api-docs`) stores its access token under the session and browser-storage key `record_api_docs_access_token`. After upgrading, anyone signed in to the docs signs in once more.
+- `record-api:setup` and `record-api:validate-setup` output, route comments and the error-response log message (`Record API error response`) use the Record API name. Update any log filter that matches the old message text.
+- The generated OpenAPI description links to the package documentation at https://record-api-docs.vercel.app.
+
+### Documentation
+- New documentation site at https://record-api-docs.vercel.app, built from `README.md` and `docs/`.
+- README: removed links to pages that do not exist and a migration guide for a 2.x release that does not exist; cache examples use the `record_api` prefix and `RECORD_API_CACHE_API`, matching `config/record.php`; the VCS repository URL points to the `MYLEKHATECH` organisation.
+- CONTRIBUTING: contributions are licensed under the MIT License.
+
 ## [1.1.0] - 2026-10-20
 
 ### Added
