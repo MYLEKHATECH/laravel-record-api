@@ -68,7 +68,6 @@ class ValidateSetupCommand extends Command
         $configFiles = [
             'record.php' => 'Record API configuration',
             'audit.php' => 'Audit logging configuration',
-            'cursor_pagination.php' => 'Cursor pagination configuration',
             'record-api.php' => 'Main package configuration',
         ];
 

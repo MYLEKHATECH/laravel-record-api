@@ -4,11 +4,28 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Every table operation in the generated OpenAPI spec has a stable `operationId`: `list{Table}`, `create{Table}`, `get{Table}`, `update{Table}`, `delete{Table}`, `restore{Table}`, `forceDelete{Table}`, `upsert{Table}` and `bulkUpsert{Table}` (e.g. `listInvoiceItems`). Code generators and AI tool callers use them as operation names. Record names that map to the same id (`invoice_items` and `invoice-items`) get a numeric suffix so ids stay unique. Existing RPC operation ids are unchanged.
+
+### Changed
+- `/docs/llms.txt` (and `llms.mdx`) describe the configured API: the tenant header only when multi-tenancy is on, auth only for protected endpoints, plus endpoint patterns, query syntax, pagination limits, the response envelope and `operationId`s. It no longer calls every API "private/internal".
+- The generated OpenAPI description no longer claims that every endpoint needs a token, no longer documents cursor pagination or `lazy=true` (neither exists on the generated endpoints), states the real `per_page` / `limit` caps, and no longer sets `info.license` to "Proprietary - Internal Use Only".
+
+### Fixed
+- Many-to-many and has-many-through writes ignored bare ids, so `"tags": [3]` linked nothing although the docs and OpenAPI described it. A bare id now links the existing row like `{"id": 3}`, with the same tenant check.
+- `record-api:validate` reported a missing `cursor_pagination.php` config on every install; that file was removed with cursor pagination.
+- `composer analyse` ran out of memory; it now runs PHPStan with a 1 GB limit.
+
+### Documentation
+- `AGENTS.md` (renamed from `AGENT.md`, with a `CLAUDE.md` pointer) gives AI coding agents the commands, layout, contracts and pitfalls of this repository.
+- `docs/SKILL.md` and `docs/SKILL-FRONTEND.md` are corrected against the code and carry skill front matter; the duplicate `docs/trae-skill-*.md` copies are removed. Corrections include: hooks are static class methods (`RecordTableTriggerType`), not closures, and reject a write by returning a response; `public:` takes `RecordTablePublic` or `isAuthRead` / `isAuthWrite`, not an array; bulk upsert takes a JSON array and requires `match_on`; pivot columns sit next to `id`; search is `?s=`; and the missing options `canUpsert`, `uniqueIds`, `overrideTimestamps` and `overrideUserstamps`.
+- README and `docs/api-documentation.md`: `?with=` works only in custom controllers using `QueryHelpers`; generated endpoints embed relations with `select`. Removed the nonexistent `record-api:cache-clear` command and stale cursor-pagination references; the validate command is `record-api:validate`.
+
 ## [1.1.1] - 2026-10-21
 
 ### Changed
 - The API docs page (`/api-docs`) stores its access token under the session and browser-storage key `record_api_docs_access_token`. After upgrading, anyone signed in to the docs signs in once more.
-- `record-api:setup` and `record-api:validate-setup` output, route comments and the error-response log message (`Record API error response`) use the Record API name. Update any log filter that matches the old message text.
+- `record-api:setup` and `record-api:validate` output, route comments and the error-response log message (`Record API error response`) use the Record API name. Update any log filter that matches the old message text.
 - The generated OpenAPI description links to the package documentation at https://record-api-docs.vercel.app.
 
 ### Documentation

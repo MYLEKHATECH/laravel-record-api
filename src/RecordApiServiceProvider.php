@@ -78,8 +78,7 @@ class RecordApiServiceProvider extends ServiceProvider
          *     meta: array,
          *     headers: array,
          *     filters: array,
-         *     request: Request,
-         *     cursor_meta: mixed
+         *     request: Request
          * }
          */
         Builder::macro('applyRequestFilters', function (Request $request, bool $isArray = true, string $orderBy = 'id', ?string $tenantColumn = ''): array {

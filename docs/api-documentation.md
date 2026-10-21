@@ -66,7 +66,6 @@ The `applyRequestFilters` method returns an array containing:
 - `headers`: Response headers
 - `filters`: Applied filters
 - `request`: Original request object
-- `cursor_meta`: Cursor pagination metadata (if applicable)
 
 **Builder macro signature:**
 
@@ -146,10 +145,11 @@ Relationship loading uses the `select` query parameter for nested inclusion and 
    `GET /api/v1/posts?author.name=eq.John`
    Fetches posts where the author's name is 'John'.
 
-5. **Legacy `with` Parameter (still supported):**
-   - `GET /api/v1/customers?with=invoices`
-   - `GET /api/v1/customers?with=invoices,contacts`
-   This eagerly loads relationships but does not support nested filters inside `with`.
+5. **`with` Parameter (custom controllers only):**
+   The generated endpoints ignore `with`; embed relationships with `select` instead:
+   - `GET /api/v1/customers?select=*,invoices(*)`
+   - `GET /api/v1/customers?select=*,invoices(*),contacts(*)`
+   `?with=` works only in your own controllers that use the `QueryHelpers` trait.
 
 ### Supported Relationship Types
 
@@ -2312,23 +2312,17 @@ Auto-detects operation type based on request data structure.
 POST /{api_prefix}/{table}/bulk/create
 ```
 
-Create multiple records in a single request.
+Create multiple records in a single request. All rows are written in one transaction.
 
 #### Request Body
 
+A JSON array of records (at most `bulk_max`, default `1000`). Do not send primary keys.
+
 ```json
-{
-  "data": [
-    {
-      "name": "Product A",
-      "price": 100.0
-    },
-    {
-      "name": "Product B",
-      "price": 150.0
-    }
-  ]
-}
+[
+  { "name": "Product A", "price": 100.0 },
+  { "name": "Product B", "price": 150.0 }
+]
 ```
 
 #### Response Format
@@ -2337,24 +2331,14 @@ Create multiple records in a single request.
 {
   "success": true,
   "error_code": 0,
-  "data": {
-    "created": 2,
-    "failed": 0,
-    "records": [
-      {
-        "id": 10,
-        "name": "Product A",
-        "price": 100.0
-      },
-      {
-        "id": 11,
-        "name": "Product B",
-        "price": 150.0
-      }
-    ]
-  },
-  "message": "Bulk create completed: 2 created, 0 failed",
-  "request_id": "req_abc123def456"
+  "data": [
+    { "id": 10, "name": "Product A", "price": 100.0 },
+    { "id": 11, "name": "Product B", "price": 150.0 }
+  ],
+  "meta": {
+    "request_id": "f9c4d1e2-9b0c-4f8a-9b8a-123456789abc",
+    "affected": 2
+  }
 }
 ```
 
@@ -2364,24 +2348,20 @@ Create multiple records in a single request.
 POST /{api_prefix}/{table}/bulk/update
 ```
 
-Update multiple records by ID.
+Update multiple records by primary key, in one transaction.
 
 #### Request Body
 
+A JSON array; every item needs its primary key and at least one field to change.
+
 ```json
-{
-  "data": [
-    {
-      "id": 10,
-      "price": 110.0
-    },
-    {
-      "id": 11,
-      "price": 160.0
-    }
-  ]
-}
+[
+  { "id": 10, "price": 110.0 },
+  { "id": 11, "price": 160.0 }
+]
 ```
+
+The response has the same shape as bulk create: the updated rows in `data` and `meta.affected`.
 
 ### Bulk Delete
 
@@ -2389,14 +2369,18 @@ Update multiple records by ID.
 POST /{api_prefix}/{table}/bulk/delete
 ```
 
-Delete multiple records by ID.
+Delete multiple records by primary key, in one transaction.
 
 #### Request Body
 
+A JSON array of ids, or of objects with the primary key:
+
 ```json
-{
-  "ids": [10, 11, 12]
-}
+[10, 11, 12]
+```
+
+```json
+[{ "id": 10 }, { "id": 11 }]
 ```
 
 ### Bulk Upsert

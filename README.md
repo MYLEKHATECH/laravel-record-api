@@ -1211,7 +1211,7 @@ Once installed, you can immediately start using the dynamic API endpoints:
 GET /api/users
 
 # Get specific user with relationships
-GET /api/users/1?with=posts,roles
+GET /api/users/1?select=*,posts(*),roles(*)
 
 # Create new user
 POST /api/users
@@ -1399,8 +1399,8 @@ Publishes default configurations for:
 # Create a new per-table RecordTableType config (config/records/tables/{name}.php)
 php artisan record-api:record customers
 
-# Clear record cache
-php artisan record-api:cache-clear
+# Clear cached query results (kept in the Laravel cache)
+php artisan cache:clear
 
 # Sync RecordTableType columns in config/records/tables from DB schema
 php artisan record-api:sync-record-columns
@@ -1459,7 +1459,7 @@ The package automatically registers RESTful API routes for dynamic database oper
 # Publish main package configuration
 php artisan vendor:publish --tag=record-api-config
 
-# Publish all configurations (record, audit, cursor_pagination, record-api)
+# Publish all configurations (record, audit, record-api)
 php artisan record-api:setup
 ```
 

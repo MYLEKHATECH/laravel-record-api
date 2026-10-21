@@ -609,6 +609,7 @@ class RelationshipResolverUtils
         }
 
         foreach ($data as $item) {
+            $item = self::linkItem($item, $relatedPk);
             if (!is_array($item)) {
                 continue;
             }
@@ -708,6 +709,7 @@ class RelationshipResolverUtils
         $actualTargetTableName = $schema[$targetTable]->table ?? $targetTable;
 
         foreach ($data as $item) {
+            $item = self::linkItem($item, $targetPk);
             if (!is_array($item)) {
                 continue;
             }
@@ -785,6 +787,15 @@ class RelationshipResolverUtils
                 }
             }
         }
+    }
+
+    /**
+     * A bare id in a many-to-many or has-many-through array (`"tags": [3]`) means "link this
+     * existing row", the same as `{"id": 3}`.
+     */
+    private static function linkItem(mixed $item, string $pk): mixed
+    {
+        return is_int($item) || (is_string($item) && '' !== $item) ? [$pk => $item] : $item;
     }
 
     /**

@@ -1,708 +1,237 @@
+---
+name: record-api-frontend
+description: Use when building a frontend, script or agent that calls a backend powered by mylekha/record-api — finding endpoints and fields in the OpenAPI spec, building CRUD, upsert, bulk and RPC requests, filters, relationship embedding, and handling responses and errors.
+---
+
 # Agent Context: record-api Frontend (API Consumer)
 
 ## What This Is
 
-A config-driven REST API backend. Every table, every function, and every schema is
-**fully described in the live OpenAPI spec** — that is the single source of truth.
-The frontend has no access to backend code. Always read the OpenAPI spec first.
-
-## The Only Source of Truth
+The backend exposes every configured table and function as REST endpoints, and describes all of
+them in a live OpenAPI spec. The spec is the source of truth: never hardcode table names, columns
+or function paths from memory.
 
 ```
-GET {baseUrl}/api/v2/docs/openapi.json
+GET {baseUrl}/{apiPrefix}/docs/openapi.json   the schema (apiPrefix is usually api/v1)
+GET {baseUrl}/{apiPrefix}/docs/llms.txt       short agent guide for this API
 ```
 
-From this response you learn:
-- Every available table name (exact slug for URL construction)
-- Every column, its type, and whether it is required
-- Every relationship and its embed alias syntax
-- Every custom function path, its HTTP method, and its payload schema
-- Which headers are required per endpoint
-- Response schemas
-
-**Never hardcode table names, column names, or function paths. Always derive them from the OpenAPI spec.**
+From the spec:
+- `paths`: every endpoint and method that exists. If a path or method is missing, it is not available for that table.
+- `operationId`: a stable name for each operation (`listInvoices`, `createInvoices`, `getInvoices`, `updateInvoices`, `deleteInvoices`, `restoreInvoices`, `upsertInvoices`, …). Use it as the function or tool name.
+- `components.schemas.<Table>Write`: the fields you may send; `<Table>Read`: the fields you get back.
+- Each operation's `description`: its relationships and payload examples. `info.description`: operators and conventions.
+- `parameters`: required headers, such as the tenant header on tenant-scoped tables.
 
 ---
 
-## How to Generate a Correct API Call
+## Making a Call
 
-When asked to write any API call, follow these steps in order.
+1. Find the path and method in the spec (`operationId` helps).
+2. Headers:
+   ```
+   Authorization: Bearer {token}     on endpoints the app protects
+   X-Tenant-ID: {tenantId}           only where the spec lists the tenant header (the name can differ)
+   Content-Type: application/json    on POST / PUT / PATCH
+   ```
+3. Body: only fields from `<Table>Write`. Never send `id`, `created_at`, `updated_at`, `deleted_at`
+   or the tenant column: the server sets them.
+4. Read the response envelope (below) and branch on `error_code`.
 
-### Step 1 — Fetch the OpenAPI spec
-
-```
-GET {baseUrl}/api/v2/docs/openapi.json
-```
-
-Find in the response:
-- `paths` — every endpoint with its method, parameters, and requestBody schema
-- `components.schemas` — every resource's fields, types, and required list
-- `info.description` — query operators, pagination options, and relationship syntax
-
-### Step 2 — Identify the operation type
-
-| What the user wants | Use |
-|---------------------|-----|
-| List / search / filter records | `GET /api/v2/{table}` with query params |
-| Get one record | `GET /api/v2/{table}/{id}` |
-| Create a record | `POST /api/v2/{table}` |
-| Update a record | `PUT /api/v2/{table}/{id}` |
-| Delete a record | `DELETE /api/v2/{table}/{id}` |
-| Restore soft-deleted | `POST /api/v2/{table}/{id}/restore` |
-| Permanently delete | `DELETE /api/v2/{table}/{id}/force` |
-| Upsert single | `POST /api/v2/{table}/upsert?match_on={col}` |
-| Upsert many | `POST /api/v2/{table}/bulk/upsert` |
-| Custom action / function | path and method from OpenAPI `paths` |
-| Auth (login/logout/refresh) | `/api/v2/auth/{action}` |
-| Report | `/api/v2/report/{name}` |
-
-### Step 3 — Build headers
-
-```
-Authorization: Bearer {token}      required for protected endpoints
-x-company-id: {companyId}          required for company-scoped endpoints
-Content-Type: application/json     required for POST / PUT / PATCH
-```
-
-> Whether an endpoint requires `x-company-id` is visible in the OpenAPI `parameters`
-> section for that path. When in doubt, include it.
-
-### Step 4 — Build the payload
-
-For write operations, look up `components.schemas.{Resource}Write` in the OpenAPI spec.
-That schema lists every writable field and which are `required`.
-
-```
-required fields   → must be present in POST / PUT
-optional fields   → include only when needed
-system fields     → never send: id, created_at, updated_at, deleted_at, company_id
-```
-
-### Step 5 — Handle the response
-
-Every response uses the same envelope:
-
-```
-success: true  → read data for the record(s), read meta for pagination
-success: false → read error_code to classify the error, read message and errors
-```
+Login is not part of this package: the app provides it, usually as a function such as
+`POST /{apiPrefix}/auth/login`. Find it in the spec.
 
 ---
 
-## Authentication Endpoints
-
-These do **not** follow the CRUD pattern. They are fixed custom paths.
+## Endpoints
 
 ```
-POST /api/v2/auth/login              body: { email, password }
-POST /api/v2/auth/logout
-POST /api/v2/auth/refresh
-POST /api/v2/auth/register
-POST /api/v2/auth/forgot-password
-POST /api/v2/auth/reset-password
-GET  /api/v2/auth/whoami
-POST /api/v2/auth/impersonate_in
-POST /api/v2/auth/impersonate_out
+GET    /{apiPrefix}/{table}                          list (filters, sort, pages)
+GET    /{apiPrefix}/{table}/{id}                     one record
+POST   /{apiPrefix}/{table}                          create
+PUT    /{apiPrefix}/{table}/{id}                     update (PATCH also works; send only changed fields)
+DELETE /{apiPrefix}/{table}/{id}                     delete (soft delete when the table supports it)
+POST   /{apiPrefix}/{table}/{id}/restore             restore a soft-deleted record
+DELETE /{apiPrefix}/{table}/{id}/force               delete permanently
+POST   /{apiPrefix}/{table}/upsert?match_on=col      create or update one record
+POST   /{apiPrefix}/{table}/bulk/create              create many
+POST   /{apiPrefix}/{table}/bulk/update              update many (each item needs its id)
+POST   /{apiPrefix}/{table}/bulk/delete              delete many
+POST   /{apiPrefix}/{table}/bulk/upsert?match_on=col create or update many
+POST   /{apiPrefix}/{table}/bulk                     mixed: no id = create, id + fields = update, id only = delete
 ```
 
-Login response shape:
-```json
-{
-  "success": true,
-  "error_code": 0,
-  "data": { "token": "eyJ...", "type": "bearer" },
-  "meta": {}
-}
-```
-
-Store the token and send it as `Authorization: Bearer {token}` on all subsequent requests.
+Functions (custom actions) have their own paths, methods and parameters, listed in the spec:
+`/{apiPrefix}/{table}/{functionName}` or `/{apiPrefix}/{functionName}` (the app may add an `rpc/` segment).
 
 ---
 
-## Standard Endpoint Pattern
+## Query Parameters (list endpoints)
 
-Every resource table follows this pattern (exact paths are in the OpenAPI `paths`):
+### Filters
 
-```
-GET    /api/v2/{table}                      list with filters, sorting, pagination
-GET    /api/v2/{table}/{id}                 get one record
-POST   /api/v2/{table}                      create
-PUT    /api/v2/{table}/{id}                 full update
-DELETE /api/v2/{table}/{id}                 soft delete (if supported)
-POST   /api/v2/{table}/{id}/restore         restore soft-deleted record
-DELETE /api/v2/{table}/{id}/force           permanent delete
-POST   /api/v2/{table}/upsert?match_on=col  upsert single record
-POST   /api/v2/{table}/bulk/upsert          upsert many records
-```
+Format: `?{column}={operator}.{value}`. Several filters are combined with AND.
 
-> Not every table exposes all endpoints. The OpenAPI `paths` object is the
-> authoritative list — if a path does not appear there, the endpoint does not exist.
+| Operator | Example |
+|----------|---------|
+| `eq`, `neq` | `?status=eq.paid` |
+| `gt`, `gte`, `lt`, `lte` | `?total=gte.100` |
+| `like`, `ilike`, `not_like` (`%` wildcard) | `?name=ilike.%john%` |
+| `contains`, `starts_with`, `ends_with` | `?ref=starts_with.INV` |
+| `regex`, `match`, `imatch` | `?ref=imatch.^inv-[0-9]+` |
+| `in`, `not_in` | `?id=in.(5,6,9)` or `?status=in.draft,sent` |
+| `between`, `not_between` | `?total=between.100,1000` |
+| `is`, `is_not` (null checks) | `?approved_at=is.null` |
+| `empty`, `not_empty` | `?notes=empty` |
+| `date_eq`, `date_gt`, `date_gte`, `date_lt`, `date_lte` (date part only) | `?date=date_gte.2024-01-01` |
+| negation | `?status=not.eq.void` |
+| any / all | `?name=like(any).{ACME,SHOP}` |
+| compare two columns | `?updated_at=compare.gt.created_at` |
+| PostgreSQL only: `fts`, `plfts`, `phfts`, `wfts`, `cs`, `cd`, `ov`, `sl`, `sr`, `nxl`, `nxr`, `adj` | `?body=fts.invoice` |
 
----
+Grouped logic: `?or=(balance_due.gt.0,id.eq.5)` and nested `?and=(or(balance_due.gt.0,id.eq.5),id.neq.2)`.
+An operator the database does not support returns `422`.
 
-## Custom Function Endpoints
-
-Custom actions (non-CRUD) have their own paths. They do **not** follow a single
-naming convention — always look them up in the OpenAPI spec.
-
-Examples from this API:
-
-```
-POST /api/v2/attendances/scan                   table-scoped action
-POST /api/v2/attendances/manual_check_in        table-scoped action
-POST /api/v2/attendances/manual_check_out       table-scoped action
-POST /api/v2/employee_rosters/close             table-scoped action
-GET  /api/v2/employee_rosters/rosters           table-scoped query
-POST /api/v2/companies/add_user                 table-scoped action
-POST /api/v2/companies/remove_user              table-scoped action
-GET  /api/v2/generate/no                        global function
-GET  /api/v2/report/{reportName}                report function
-GET  /api/v2/roles/role_permission              table-scoped query
-```
-
-For each custom function, the OpenAPI spec provides:
-- The exact HTTP method
-- Required query parameters or body schema
-- Response shape
-
----
-
-## Report Endpoints
+### Search, columns, relations, sorting
 
 ```
-GET /api/v2/report/bill
-GET /api/v2/report/customer_invoice
-GET /api/v2/report/delivery_note
-GET /api/v2/report/estimate
-GET /api/v2/report/inventory_summary
-GET /api/v2/report/inventory_valuation
-GET /api/v2/report/invoice
-GET /api/v2/report/product
-GET /api/v2/report/purchase_order
-GET /api/v2/report/receive_note
-GET /api/v2/report/so_customer
+?s=john                                      search the table's searchable columns
+?select=id,name,email                        only these columns
+?select=*,customer:customers(id,name)        embed a related record
+?select=id,items(id,name,product:products(*))  nested embedding
+?sortby=created_at&order=asc                 sort (default: primary key, desc)
 ```
 
-All accept standard query params (filters, date range, pagination).
+Relationship names and their tables are in each operation's `description` in the spec.
 
----
-
-## Query Parameters — Full Reference
-
-All parameters go in the URL query string on GET requests.
-
-### Pagination
-
-Two modes:
-
-**Traditional** (default):
-
-| Param | Default | Max | Notes |
-|-------|---------|-----|-------|
-| `page` | 1 | — | Page number |
-| `per_page` | 25 | 100 | Records per page |
-
-**Cursor-based** (auto-enabled when result set > 10,000 rows, or request explicitly):
-
-| Param | Values | Notes |
-|-------|--------|-------|
-| `cursor` | record id | Start cursor position |
-| `direction` | `next` \| `prev` | Pagination direction |
-
-When cursor mode is active, `meta` returns `next_cursor` and `prev_cursor` instead of `page`/`total`.
-
-### Full-text Search
+### Pages
 
 ```
-?s=search term
-?search=search term       (alias)
+?page=2&per_page=25     meta.page, meta.per_page, meta.total (+ X-Page, X-Per-Page, X-Total-Pages, X-Total-Count headers)
+?limit=50               the first 50 rows, no paging (meta.total = rows returned)
+(neither)               up to the server's limit_max rows, meta.total
 ```
 
-Only searches columns that the backend has indexed. Check the schema to see what is indexed.
-
-### Column Selection
-
-```
-?select=col1,col2,col3          select specific columns
-?select=*                        all columns
-```
-
-### Relationship Embedding
-
-Embed related records directly in the response using the alias syntax:
-
-```
-?select=*,alias:foreignTable(col1,col2)
-?select=*,alias:foreignTable(*)
-```
-
-Real examples:
-```
-?select=*,customer:customers(id,display_name,primary_email_addr)
-?select=*,items:invoice_items(*),customer:customers(id,display_name)
-?select=*,vendor:vendors(id,display_name),class:classes(id,name)
-?select=*,product:products(id,name,price),warehouse:warehouses(id,name)
-```
-
-> The `alias` is the relationship name you want in the response.
-> The `foreignTable` is the actual table name from the OpenAPI spec.
-> Always use snake_case table names exactly as they appear in the OpenAPI paths.
-
-Legacy eager load (no column control):
-```
-?with=customers,invoice_items
-```
-
-### Sorting
-
-```
-?sortby=created_at&order=desc
-?sortby=date&order=asc
-?sortby=total_amount&order=desc
-```
-
-Default order is ascending on `id` when not specified.
+`per_page` and `limit` are capped by the server (`per_page_max`, `limit_max`; 10,000 by default).
+There is no cursor pagination.
 
 ### Aggregation
 
 ```
 ?aggregate=count
-?aggregate=sum:total_amount
-?aggregate=count,sum:total_amount,avg:total_amount
-?aggregate=sum:total_amount&group_by=status
-?aggregate=count,sum:total_amount&group_by=status,class_id
+?aggregate=count,sum:total,avg:total
+?aggregate=sum:total&group_by=status
 ```
 
-Functions: `count` `count:{col}` `sum:{col}` `avg:{col}` `min:{col}` `max:{col}`
+Functions: `count`, `count:{col}`, `sum:{col}`, `avg:{col}`, `min:{col}`, `max:{col}`.
 
 ---
 
-## Filter Operators
+## Writing Related Records
 
-Format: `?{column}={operator}.{value}`
-All filters on one request are ANDed together.
+Send related records under the relationship's name, in the same body as the parent.
 
-### Equality
+| Relationship | Payload | Remove |
+|--------------|---------|--------|
+| belongs-to | set the foreign key: `"customer_id": 42` | set it to `null` |
+| has-many (child rows) | `"items": [{...new}, {"id": 3, ...changes}]` | `{"id": 3, "_delete": true}` |
+| many-to-many | `"tags": [1, {"id": 2}, {"id": 3, "is_primary": true}]` | `{"id": 4, "_delete": true}` |
+| has-many-through | `"modules": [1, {"id": 2}]` | `{"id": 2, "_delete": true}` |
 
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `eq` | Equals | `?status=eq.active` |
-| `neq` | Not equals | `?status=neq.archived` |
-
-### Comparison
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `gt` | Greater than | `?total_amount=gt.1000` |
-| `gte` | Greater than or equal | `?total_amount=gte.1000` |
-| `lt` | Less than | `?total_amount=lt.5000` |
-| `lte` | Less than or equal | `?total_amount=lte.5000` |
-
-### String Pattern
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `like` | SQL LIKE (use `%` wildcard) | `?display_name=like.%John%` |
-| `ilike` | Case-insensitive LIKE | `?display_name=ilike.john` |
-| `not_like` | SQL NOT LIKE | `?display_name=not_like.%test%` |
-| `contains` | Substring match | `?display_name=contains.John` |
-| `starts_with` | Prefix | `?ref_number=starts_with.INV` |
-| `ends_with` | Suffix | `?email=ends_with.gmail.com` |
-| `regex` | Regular expression | `?ref_number=regex.^INV-[0-9]+` |
-| `match` / `imatch` | Regex helpers (case-sensitive / insensitive) | `?ref_number=imatch.^inv-[0-9]+` |
-
-### List
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `in` | Value in list | `?status=in.draft,pending,approved` |
-| `not_in` | Value not in list | `?status=not_in.cancelled,void` |
-| `in` (parenthesized) | Postgres-style list | `?id=in.(5,6,9)` |
-
-### Range
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `between` | Inclusive range | `?total_amount=between.100,10000` |
-| `not_between` | Outside range | `?total_amount=not_between.0,100` |
-
-### Null and Empty
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `is.null` | Is NULL | `?deleted_at=is.null` |
-| `is_not.null` | Is NOT NULL | `?deleted_at=is_not.null` |
-| `is` | Is NULL (short form) | `?approved_at=is.null` |
-| `is_not` | Is NOT NULL (short form) | `?approved_at=is_not.null` |
-| `empty` | NULL or empty string | `?notes=empty` |
-| `not_empty` | Not null and not empty | `?notes=not_empty` |
-
-### Date (date part only, ignores time)
-
-| Operator | Example |
-|----------|---------|
-| `date_eq` | `?date=date_eq.2024-01-15` |
-| `date_gt` | `?date=date_gt.2024-01-01` |
-| `date_gte` | `?date=date_gte.2024-01-01` |
-| `date_lt` | `?date=date_lt.2024-12-31` |
-| `date_lte` | `?date=date_lte.2024-12-31` |
-
-### Advanced
-
-| Operator / Syntax | Example |
-|----------|---------|
-| `not.<operator>` | `?status=not.eq.archived` |
-| `any` modifier | `?name=like(any).{ACME,SHOP}` |
-| `all` modifier | `?name=ilike(all).{spx,admin}` |
-| grouped `or` | `?vendor_id=eq.27&or=(balance_due.gt.0,id.eq.5)` |
-| grouped nested | `?vendor_id=eq.27&and=(or(balance_due.gt.0,id.eq.5),id.neq.2)` |
-
-### PostgreSQL-only operators
-
-| Operator | Example |
-|----------|---------|
-| `fts`, `plfts`, `phfts`, `wfts` | `?description=fts.invoice` |
-| `cs`, `cd`, `ov`, `sl`, `sr`, `nxl`, `nxr`, `adj` | `?tags=cs.{a,b}` |
-
-If an operator is not supported by the current database driver, API responds with validation error `422`.
-
-### Column Comparison
-
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `compare` | Column equals another column | `?updated_at=compare.created_at` |
-
----
-
-## Create and Update Payload
-
-```
-POST /api/v2/{table}       body: writable columns from the schema
-PUT  /api/v2/{table}/{id}  body: full update with writable columns
-```
-
-Rules:
-- Only send fields listed in `components.schemas.{Resource}Write` in the OpenAPI spec
-- Required fields (from `required: [...]` in the schema) must always be present in POST
-- Never send: `id`, `created_at`, `updated_at`, `deleted_at`, `company_id` — these are system-managed
-- For PATCH-style partial updates, some tables accept `PUT` with only changed fields
-
-### Real Example — Create an Invoice
-
-From OpenAPI schema `InvoicesWrite`, required fields: `[]` (none required), writable fields include:
-
-```json
-POST /api/v2/invoices
-Authorization: Bearer {token}
-x-company-id: {companyId}
-Content-Type: application/json
-
-{
-  "customer_id": 42,
-  "class_id": 1,
-  "term_id": 3,
-  "ref_number": "INV-2024-001",
-  "date": "2024-01-15",
-  "due_date": "2024-02-15",
-  "email": "customer@example.com",
-  "total_amount": 1500.00,
-  "status": "draft",
-  "private_note": "Internal note",
-  "items": [
-    { "product_id": 10, "name": "Service A", "quantity": 2, "price": 500.00, "total_amount": 1000.00 },
-    { "product_id": 11, "name": "Service B", "quantity": 1, "price": 500.00, "total_amount": 500.00 }
-  ]
-}
-```
-
-### Real Example — List Products with Filters
-
-```
-GET /api/v2/products
-  ?select=*,category:product_categories(id,name)
-  &status=eq.active
-  &total_amount=gte.100
-  &sortby=name
-  &order=asc
-  &per_page=25
-  &page=1
-Authorization: Bearer {token}
-x-company-id: {companyId}
-```
-
-### Real Example — List Invoices with Date Range
-
-```
-GET /api/v2/invoices
-  ?select=*,customer:customers(id,display_name),items:invoice_items(*)
-  &date=date_gte.2024-01-01
-  &date=date_lte.2024-12-31
-  &status=neq.void
-  &sortby=date
-  &order=desc
-  &per_page=50
-Authorization: Bearer {token}
-x-company-id: {companyId}
-```
-
----
-
-## Relationship Payload on Write
-
-When creating or updating a record, include related records in the same body.
-The key is the relationship alias. Look up the relationship names in the OpenAPI spec.
-
-### Items / Line Items (HasMany pattern)
-
-Array of child operations:
-
-| Element | Operation |
-|---------|-----------|
-| `{ ...fields }` (no id) | Create new child |
-| `{ "id": 5, ...fields }` | Update existing child |
-| `{ "id": 5, "_delete": true }` | Remove child |
-| `5` (integer only) | Attach by id |
+- Has-many: an item without `id` is created; an item with `id` updates that child, but only a child this parent already owns.
+- Many-to-many and has-many-through: a bare id or `{"id": …}` links an existing row; an object without `id` creates the row and links it.
+  Extra pivot columns go next to the `id` (`"is_primary": true`), not in a nested object.
+- Rows of another tenant are never linked or changed.
 
 ```json
 {
   "customer_id": 42,
-  "date": "2024-01-15",
   "items": [
-    { "product_id": 10, "quantity": 2, "price": 500.00, "total_amount": 1000.00 },
+    { "product_id": 10, "quantity": 2 },
     { "id": 3, "quantity": 5 },
     { "id": 7, "_delete": true }
-  ]
+  ],
+  "tags": [1, { "id": 2 }]
 }
-```
-
-### Pivot / Many-to-Many (BelongsToMany pattern)
-
-Array with optional `pivot` key for extra junction columns:
-
-```json
-{
-  "name": "Admin Role",
-  "permissions": [
-    1,
-    { "id": 2 },
-    { "id": 3, "pivot": { "is_primary": true } },
-    { "id": 4, "_delete": true }
-  ]
-}
-```
-
-### BelongsTo (FK in root)
-
-Just set the foreign key column directly — no nested object:
-
-```json
-{ "customer_id": 42, "class_id": 1, "term_id": 3 }
-```
-
-### Relationship Write Summary
-
-| Pattern | Payload | Remove |
-|---------|---------|--------|
-| FK / BelongsTo | `"fk_col": id` in root body | — |
-| HasMany / line items | `"rel": [id, {id,...}, {...}]` | `{id, "_delete": true}` |
-| HasOne | `"rel": {fields}` | `{"_delete": true}` |
-| BelongsToMany | `"rel": [id, {id, pivot:{}}]` | `{id, "_delete": true}` |
-| MorphMany | `"rel": [{data}]` | `{id, "_delete": true}` |
-
----
-
-## Upsert
-
-`match_on` is a **query parameter**, not a body field.
-
-```
-POST /api/v2/{table}/upsert?match_on={column}
-POST /api/v2/{table}/upsert?match_on={col1},{col2}
-Body: same as create payload
-```
-
-Match by existing column value → update. No match → create.
-
-Example:
-```
-POST /api/v2/products/upsert?match_on=ref_number
-Body: { "ref_number": "PROD-001", "name": "Widget", "price": 9.99 }
 ```
 
 ---
 
-## Bulk Upsert
+## Upsert and Bulk
 
-All bulk operations go through a single `/bulk/upsert` endpoint.
-Wrap records in a `data` array.
+`match_on` is a **query parameter** and is required. Several columns: `match_on=sku,warehouse_id`.
 
 ```
-POST /api/v2/{table}/bulk/upsert?match_on={col}
-Content-Type: application/json
-
-Body:
-{
-  "data": [
-    { "ref_number": "INV-001", "customer_id": 1, "total_amount": 500 },
-    { "ref_number": "INV-002", "customer_id": 2, "total_amount": 750 }
-  ]
-}
+POST /{apiPrefix}/products/upsert?match_on=sku
+{ "sku": "PROD-001", "name": "Widget", "price": 9.99 }
 ```
 
-Without `match_on`, all records are created. With `match_on`, existing records are updated.
+A match updates that row; no match creates one. Every item must contain the `match_on` columns.
 
-> Bulk operations run lifecycle hooks per record but skip row-level validators.
+Bulk endpoints take a **JSON array** of items (at most the server's `bulk_max`, 1,000 by default):
+
+```
+POST /{apiPrefix}/products/bulk/upsert?match_on=sku
+[
+  { "sku": "PROD-001", "price": 9.99 },
+  { "sku": "PROD-002", "price": 12.50 }
+]
+```
+
+`POST /{table}/bulk` also accepts `{"items": [...]}`. Bulk writes run in one transaction: one rejected
+item rolls back the batch.
 
 ---
 
 ## Response Envelope
 
-Every response — success or error — uses the same wrapper.
-
-### Success (list)
-
 ```json
 {
   "success": true,
   "error_code": 0,
-  "data": [ {...}, {...} ],
-  "meta": {
-    "request_id": "uuid",
-    "page": 1,
-    "per_page": 25,
-    "total": 142
-  }
+  "data": [ { "id": 1 } ],
+  "meta": { "request_id": "uuid", "page": 1, "per_page": 25, "total": 142 }
 }
 ```
-
-### Success (cursor-based pagination)
-
-```json
-{
-  "success": true,
-  "error_code": 0,
-  "data": [ {...}, {...} ],
-  "meta": {
-    "request_id": "uuid",
-    "next_cursor": 10050,
-    "prev_cursor": 9950,
-    "per_page": 25
-  }
-}
-```
-
-### Success (single record)
-
-```json
-{
-  "success": true,
-  "error_code": 0,
-  "data": { "id": 5, "name": "...", ... },
-  "meta": { "request_id": "uuid" }
-}
-```
-
-### Error
 
 ```json
 {
   "success": false,
   "error_code": 10004,
   "message": "Validation failed",
-  "errors": {
-    "email": ["The email field is required."],
-    "total_amount": ["Must be a number."]
-  },
+  "errors": { "email": ["The email field is required."] },
   "meta": { "request_id": "uuid" }
 }
 ```
 
-Important: key is `error_code` (snake_case). Pagination meta key is `page`, not `current_page`.
+The key is `error_code` (snake_case), and pages use `page`, not `current_page`.
+Branch on `error_code`, not on `message`, and quote `meta.request_id` when reporting a failure.
 
-### Error Code Reference
-
-| error_code | Meaning | HTTP |
-|------------|---------|------|
-| 0 | Success | 200 |
-| 10000 | General error | 500 |
-| 10001 | Invalid company/tenant ID | 400 |
-| 10002 | Invalid access | 401 |
-| 10003 | Invalid token | 401 |
-| 10004 | Validation failed | 422 |
-| 10005 | Invalid resource | 404 |
-| 10006 | Invalid permission | 403 |
-| 10007 | Invalid credential | 401 |
-| 10008 | Permission denied | 403 |
-| 10009 | Resource not found | 404 |
-| 10010 | Internal server error | 500 |
-| 10011 | Unknown error | 500 |
-| 10012 | Company/tenant not found | 404 |
-| 10013 | Company/tenant disabled | 403 |
-| 10014 | No company/tenant permission | 403 |
-| 10015 | Token expired | 401 |
-
----
-
-## Real Schema Reference (from OpenAPI)
-
-Use these as guides when building payloads. Always verify the latest schema from the OpenAPI spec.
-
-### Products (writable fields)
-
-```
-Required: []
-Fields: name, description, price(decimal), cost(decimal), unit, sku, barcode,
-        is_active, product_category_id(int64), warehouse_id(int64), company_id(int64)
-```
-
-### Invoices (writable fields)
-
-```
-Required: []
-Fields: customer_id(int64), class_id(int64), term_id(int64), project_id(int64),
-        ref_number, date, due_date, email, ship_addr, bill_addr,
-        total_amount(decimal), discount(decimal), tax_rate(decimal), tax_amount(decimal),
-        exchange_rate(decimal), private_note, management_note, status
-```
-
-### Customers (writable fields)
-
-```
-Required: []
-Fields: display_name, given_name, family_name, company_name, primary_phone,
-        primary_email_addr, mobile, active, notes, vat_in, currency_ref,
-        bill_addr, ship_addr
-```
-
-### Employees (writable fields)
-
-```
-Required: []
-Fields: first_name, last_name, gender, date_of_birth(date), join_date(date),
-        phone, email, address, designation_id(int64), department_id(int64),
-        employee_group_id(int64), employee_shift_id(int64), status, note
-```
-
-### Banks (writable fields)
-
-```
-Required: [name, account_number]
-Fields: name, account_number, bank_name, bank_address, description, is_default
-```
+| error_code | Meaning | Usual HTTP |
+|------------|---------|------------|
+| 0 | success | 200 |
+| 10000 | general error | 400 |
+| 10001 | invalid tenant id | 400 |
+| 10002 | not authenticated / invalid access | 401 |
+| 10003 | invalid token | 401 |
+| 10004 | validation failed | 422 |
+| 10005 | invalid resource | 404 |
+| 10006 | invalid permission | 403 |
+| 10007 | invalid credentials | 401 |
+| 10008 | permission denied | 403 |
+| 10009 | not found | 404 |
+| 10010 | internal server error | 500 |
+| 10011 | unknown error | 500 |
+| 10012 | tenant not found | 404 |
+| 10013 | tenant disabled | 403 |
+| 10014 | tenant has no access to this operation | 403 |
+| 10015 | token expired | 401 |
 
 ---
 
-## Reading the OpenAPI Spec — Quick Guide
+## Rules for Agents
 
-When working on a new feature, extract what you need from the spec:
-
-```
-1. Table name       paths key → strip /api/v2/ and /{id} → the table slug
-2. Schema fields    components.schemas.{Table}Write → properties list + required list
-3. Relationships    info.description → embedded relationship examples for this table
-4. Custom paths     paths → look for non-standard endpoints on the table (not /{id}, /upsert, /bulk/upsert)
-5. Auth required    paths.{path}.{method}.security → if empty [], no auth needed
-6. x-company-id     paths.{path}.{method}.parameters → look for x-company-id header param
-```
-
-Always trust the spec over any cached knowledge. The spec reflects the live server.
+- Read the spec first; do not invent tables, fields or endpoints.
+- Prefer one request with `select` relations over many requests.
+- Confirm with the user before delete, force delete, bulk or upsert writes.
+- On `401`, re-authenticate; on `403`, do not retry; on `422`, fix the fields named in `errors`.
