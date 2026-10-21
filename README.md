@@ -602,7 +602,7 @@ return [
     'cache' => [
         'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
     
@@ -696,7 +696,7 @@ return [
     'cache' => [
         'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
     'global_functions' => $globalFunctions,
@@ -1177,9 +1177,9 @@ CREATE INDEX idx_users_email ON users(email);
 // config/record.php
 return [
     'cache' => [
-        'enabled' => env('CACHE_API', false),
+        'enabled' => env('RECORD_API_CACHE_API', false),
         'ttl' => 3600,
-        'prefix' => 'sp_laravel_api',
+        'prefix' => 'record_api',
         'per_table' => [],
     ],
 ];

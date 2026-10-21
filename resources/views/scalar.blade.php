@@ -166,7 +166,7 @@
             apiPrefix: @json(trim(config('record.api_prefix', 'api/v1'), '/')),
         };
         const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-        const tokenStorageKey = 'sp_api_docs_access_token';
+        const tokenStorageKey = 'record_api_docs_access_token';
 
         function persistToken(token) {
             localStorage.setItem(tokenStorageKey, token);
