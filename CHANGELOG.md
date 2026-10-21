@@ -4,6 +4,8 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-21
+
 ### Added
 - Every table operation in the generated OpenAPI spec has a stable `operationId`: `list{Table}`, `create{Table}`, `get{Table}`, `update{Table}`, `delete{Table}`, `restore{Table}`, `forceDelete{Table}`, `upsert{Table}` and `bulkUpsert{Table}` (e.g. `listInvoiceItems`). Code generators and AI tool callers use them as operation names. Record names that map to the same id (`invoice_items` and `invoice-items`) get a numeric suffix so ids stay unique. Existing RPC operation ids are unchanged.
 
