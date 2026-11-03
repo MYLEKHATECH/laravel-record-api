@@ -42,6 +42,7 @@
   },
   "scripts": {
     "test": "vendor/bin/phpunit",
+    "test:pgsql": "DB_CONNECTION=pgsql DB_HOST=${DB_HOST:-127.0.0.1} DB_PORT=${DB_PORT:-5432} DB_DATABASE=${DB_DATABASE:-record_api_testing} DB_USERNAME=${DB_USERNAME:-postgres} DB_PASSWORD=${DB_PASSWORD:-postgres} vendor/bin/phpunit",
     "test-coverage": "vendor/bin/phpunit --coverage-html coverage",
     "analyse": "vendor/bin/phpstan analyse src tests --memory-limit=1G",
     "format": "@rector:fix",

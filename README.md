@@ -565,6 +565,13 @@ DB_USERNAME=your_username
 DB_PASSWORD=your_password
 ```
 
+The generated SQL follows the connection's driver; MySQL statements are the same as on MySQL-only releases. On PostgreSQL:
+
+- Embedded relations (`select=*,store:stores(*)`) of tables with more than 50 columns are built from several `jsonb_build_object()` calls merged with `||`, since a PostgreSQL function takes at most 100 arguments.
+- `?s=` searches with `ILIKE` on every searchable column; `columnIndexes` (MySQL `MATCH … AGAINST`) is used on MySQL/MariaDB only.
+- `regex` / `match` / `imatch` filters use `~` / `~*`.
+- Upserts behave as MySQL's `ON DUPLICATE KEY UPDATE`: when `match_on` names a unique index the native `ON CONFLICT` upsert runs; otherwise each row updates the row it collides with on any unique index (primary key included), or is inserted.
+
 ### SQLite Configuration
 
 ```env

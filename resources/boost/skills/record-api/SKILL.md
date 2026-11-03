@@ -247,7 +247,7 @@ Every `GET /{table}` supports out of the box:
 
 ```
 ?select=*,category(id,name),variants(*)   column selection + relationship embedding
-?s=search term                             full-text search across indexed columns
+?s=search term                             search across searchable columns (MySQL: full-text on columnIndexes; PostgreSQL: ILIKE)
 ?status=eq.active&price=gte.100           filter operators + grouped logic
 ?vendor_id=eq.27&or=(balance_due.gt.0,id.eq.5) grouped OR/AND expressions
 ?sortby=price&order=desc                   sorting

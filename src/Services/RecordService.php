@@ -270,7 +270,7 @@ class RecordService
             $updateColumns = ['updated_at'];
         }
 
-        DB::table($actualTableName)->upsert([$item], $matchOn, $updateColumns);
+        $this->upsertRows($actualTableName, $pk, [$item], $matchOn, $updateColumns);
 
         $tenantEnabled = $this->shouldApplyTenantId($tableSchema);
         $cacheTenantId = $tenantEnabled ? $this->normalizeTenantId($tenantId) : null;
@@ -323,6 +323,82 @@ class RecordService
             ],
             'meta' => [],
         ];
+    }
+
+    /**
+     * Write upsert rows the way MySQL's `INSERT … ON DUPLICATE KEY UPDATE` does.
+     *
+     * MySQL (and MariaDB, and any driver whose unique indexes cannot be read) gets Laravel's native upsert, unchanged.
+     * PostgreSQL and SQLite need a unique index on exactly the conflict target (`ON CONFLICT (match_on)`); when
+     * `match_on` names one, the native upsert is used as well. Otherwise each row updates the existing row it collides
+     * with on any unique index (as MySQL does), or is inserted when it collides with none.
+     *
+     * @param list<array<string, mixed>> $items
+     * @param list<string>               $matchOn
+     * @param list<string>               $updateColumns
+     *
+     * @return int affected rows (the native upsert's count; one per written row otherwise)
+     */
+    private function upsertRows(string $tableName, string $pk, array $items, array $matchOn, array $updateColumns): int
+    {
+        $driver = DB::getDriverName();
+        $uniqueIndexes = in_array($driver, ['pgsql', 'sqlite'], true) ? SchemaRegistryUtils::getUniqueIndexes($tableName) : null;
+
+        if (null === $uniqueIndexes || $this->isUniqueIndex($matchOn, $uniqueIndexes)) {
+            return DB::table($tableName)->upsert($items, $matchOn, $updateColumns);
+        }
+
+        return DB::transaction(function () use ($tableName, $pk, $items, $uniqueIndexes, $updateColumns): int {
+            $affected = 0;
+            foreach ($items as $item) {
+                $existingKey = null;
+                foreach ($uniqueIndexes as $uniqueIndex) {
+                    $query = DB::table($tableName);
+                    foreach ($uniqueIndex as $column) {
+                        // A missing or NULL value never collides on a unique index.
+                        if (!isset($item[$column])) {
+                            continue 2;
+                        }
+
+                        $query->where($column, $item[$column]);
+                    }
+
+                    $existing = $query->first([$pk]);
+                    if ($existing) {
+                        $existingKey = $existing->$pk;
+
+                        break;
+                    }
+                }
+
+                if (null === $existingKey) {
+                    DB::table($tableName)->insert($item);
+                    ++$affected;
+                } elseif ([] !== $updateColumns) {
+                    DB::table($tableName)->where($pk, $existingKey)->update(array_intersect_key($item, array_flip($updateColumns)));
+                    ++$affected;
+                }
+            }
+
+            return $affected;
+        });
+    }
+
+    /**
+     * @param list<string>       $columns
+     * @param list<list<string>> $uniqueIndexes
+     */
+    private function isUniqueIndex(array $columns, array $uniqueIndexes): bool
+    {
+        sort($columns);
+        foreach ($uniqueIndexes as $uniqueIndex) {
+            sort($uniqueIndex);
+            if ($uniqueIndex === $columns) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -421,7 +497,7 @@ class RecordService
             $updateColumns = ['updated_at'];
         }
 
-        $affected = DB::table($actualTableName)->upsert($preparedItems, $matchOn, $updateColumns);
+        $affected = $this->upsertRows($actualTableName, $pk, $preparedItems, $matchOn, $updateColumns);
 
         $this->invalidateTableCache($table, $cacheTenantId, $tenantEnabled);
 

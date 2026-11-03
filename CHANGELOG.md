@@ -4,6 +4,17 @@ All notable changes to `record-api` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-03
+
+### Added
+- PostgreSQL support for the generated endpoints. The SQL is chosen by the connection's driver; the MySQL SQL is unchanged.
+- `composer test:pgsql` runs the package's tests on PostgreSQL.
+
+### Fixed
+- PostgreSQL: embedding a related table with more than 50 columns (`select=*,store:stores(*)`) failed with `cannot pass more than 100 arguments to a function`. The JSON object is now built from `jsonb_build_object()` chunks of 50 pairs merged with `||` (objects of up to 50 pairs keep the single `json_build_object()` call).
+- PostgreSQL and SQLite: `?s=` on a table with `columnIndexes` used MySQL's `MATCH … AGAINST`; it now searches with `ILIKE` (`LIKE` on SQLite). MySQL/MariaDB keep `MATCH … AGAINST`.
+- PostgreSQL and SQLite: an upsert or bulk upsert whose `match_on` is not exactly a unique index failed (`ON CONFLICT` needs a matching unique constraint). It now does what MySQL's `ON DUPLICATE KEY UPDATE` does: a row colliding with an existing row on any unique index updates it, any other row is inserted. A `match_on` that is a unique index still uses the native upsert.
+
 ## [1.2.1] - 2026-10-21
 
 ### Added
