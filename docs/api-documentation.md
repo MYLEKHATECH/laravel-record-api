@@ -1918,6 +1918,7 @@ Create a new record or update an existing one based on matching columns.
 
 - `match_on` (string, required) - Comma-separated list of columns to use for matching records.
   - Example: `?match_on=sku` or `?match_on=email,tenant_id`
+  - The write is MySQL's `INSERT … ON DUPLICATE KEY UPDATE` on every driver: a row that collides with an existing row on a unique index updates it, otherwise it is inserted. On PostgreSQL and SQLite, a `match_on` that is not exactly a unique index is emulated row by row with the same result (a table with no unique key besides the primary key always inserts).
 
 #### Request Body
 

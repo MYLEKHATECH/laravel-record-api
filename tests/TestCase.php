@@ -6,6 +6,7 @@ use Orchestra\Testbench\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Mylekha\RecordApi\RecordApiServiceProvider;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Schema\Blueprint;
 
@@ -58,6 +59,12 @@ class TestCase extends BaseTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // SQLite runs in memory, so every test starts with an empty database. On a server database (`composer
+        // test:pgsql`) the tables a previous test created are still there: drop them first.
+        if ('sqlite' !== DB::getDriverName()) {
+            Schema::dropAllTables();
+        }
 
         // Clear static schema registry cache between tests to prevent cross-test contamination
         SchemaRegistryUtils::refresh();

@@ -137,7 +137,8 @@ class QueryBuilderFiltersUtils
             if ([] !== $searchableCols || ($isNumeric && [] !== $numericCols)) {
                 $builder->where(function ($q) use ($searchableCols, $numericCols, $keyword, $table, $isNumeric, $likeOperator): void {
                     if ([] !== $searchableCols) {
-                        $hasFullText = self::hasFullTextIndex($table, $searchableCols);
+                        // MATCH … AGAINST is MySQL/MariaDB syntax; other drivers search with (I)LIKE below.
+                        $hasFullText = self::supportsMatchAgainst() && self::hasFullTextIndex($table, $searchableCols);
                         if ($hasFullText && strlen($keyword) >= 3) {
                             $columns = implode(',', array_map(fn($col): string => sprintf('%s.%s', $table, $col), $searchableCols));
                             $q->whereRaw(sprintf('MATCH(%s) AGAINST(? IN BOOLEAN MODE)', $columns), [sprintf('+%s*', $keyword)]);
@@ -1616,6 +1617,11 @@ class QueryBuilderFiltersUtils
      *
      * @return bool True if full-text index exists, false otherwise
      */
+    private static function supportsMatchAgainst(): bool
+    {
+        return in_array(DB::getDriverName(), ['mysql', 'mariadb'], true);
+    }
+
     private static function hasFullTextIndex(string $table, array $columns): bool
     {
         $cacheKey = $table . '_fulltext_' . implode('_', $columns);

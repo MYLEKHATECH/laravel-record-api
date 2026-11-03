@@ -17,6 +17,7 @@ Request flow: `routes/api.php` → `CoreRecordController` (traits in `src/Http/C
 ```bash
 composer install
 composer test            # PHPUnit (Orchestra Testbench, SQLite in memory)
+composer test:pgsql      # the same tests on PostgreSQL (database record_api_testing, postgres/postgres on 127.0.0.1)
 composer analyse         # PHPStan
 composer format-check    # Rector dry run (some existing files are already flagged; do not reformat unrelated code)
 npm ci --prefix website && npm run build --prefix website   # docs site, when docs change
@@ -63,6 +64,9 @@ Run `composer test` before finishing any change. Run a single file with `vendor/
 - Validators (`createValidator`, …) may be closures returning a `Validator`.
 - List endpoints page with `page` / `per_page` or `limit`; there is no cursor pagination. Search is `?s=`.
 - Upsert and bulk upsert require the `match_on` query parameter; bulk endpoints take a JSON array.
+- SQL is per driver (`DB::getDriverName()`): keep MySQL's SQL text unchanged when adding a PostgreSQL branch. PostgreSQL
+  functions take at most 100 arguments, MySQL `MATCH … AGAINST` / `REGEXP` have no PostgreSQL equivalent of that name,
+  and `ON CONFLICT` needs a unique index on exactly the conflict columns.
 - Writes go through the query builder (`DB::table()`), not Eloquent, so model events and casts do not run.
 
 ## Making a change

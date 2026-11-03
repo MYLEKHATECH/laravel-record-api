@@ -73,6 +73,10 @@ class GroupedLogicFilterTest extends TestCase
     /** @test */
     public function it_returns_validation_error_when_operator_not_supported_for_current_driver(): void
     {
+        if ('pgsql' === DB::getDriverName()) {
+            $this->markTestSkipped('fts is a PostgreSQL operator, so it is supported on this driver.');
+        }
+
         $response = $this->getJson('/api/bills?balance_due=fts.invoice');
 
         $response->assertStatus(422);

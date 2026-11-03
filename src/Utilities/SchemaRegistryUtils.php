@@ -20,6 +20,9 @@ class SchemaRegistryUtils
 
     private static array $foreignKeysCache = [];
 
+    /** @var array<string, list<list<string>>|null> */
+    private static array $uniqueIndexesCache = [];
+
     /**
      * Get a specific table schema.
      */
@@ -126,6 +129,7 @@ class SchemaRegistryUtils
     public static function refresh(): void
     {
         self::$cache = [];
+        self::$uniqueIndexesCache = [];
         RelationshipResolverUtils::clearSchemaCache();
         QueryBuilderFiltersUtils::clearColumnCache();
     }
@@ -135,6 +139,7 @@ class SchemaRegistryUtils
         self::$cache = [];
         self::$uniqueColumnsCache = [];
         self::$foreignKeysCache = [];
+        self::$uniqueIndexesCache = [];
         RelationshipResolverUtils::clearSchemaCache();
         QueryBuilderFiltersUtils::clearColumnCache();
     }
@@ -173,7 +178,57 @@ class SchemaRegistryUtils
     public static function clearTableCache(string $tableName): void
     {
         unset(self::$cache[$tableName]);
-        unset(self::$uniqueColumnsCache[$tableName], self::$foreignKeysCache[$tableName]);
+        unset(self::$uniqueColumnsCache[$tableName], self::$foreignKeysCache[$tableName], self::$uniqueIndexesCache[$tableName]);
+    }
+
+    /**
+     * The column lists of the table's unique indexes, primary key included (partial and expression indexes are left
+     * out: they cannot serve as a plain conflict target). Read on PostgreSQL and SQLite only; null on other drivers or
+     * when the catalog cannot be read.
+     *
+     * @return list<list<string>>|null
+     */
+    public static function getUniqueIndexes(string $tableName): ?array
+    {
+        if (array_key_exists($tableName, self::$uniqueIndexesCache)) {
+            return self::$uniqueIndexesCache[$tableName];
+        }
+
+        $driver = DB::getDriverName();
+        $physicalName = DB::getTablePrefix() . $tableName;
+        $indexes = null;
+
+        try {
+            if ('pgsql' === $driver) {
+                $rows = DB::select(
+                    "select array_to_string(array(select a.attname from unnest(i.indkey) with ordinality as k(attnum, ord) join pg_attribute a on a.attrelid = i.indrelid and a.attnum = k.attnum order by k.ord), ',') as columns from pg_index i join pg_class t on t.oid = i.indrelid join pg_namespace n on n.oid = t.relnamespace where t.relname = ? and n.nspname = current_schema() and i.indisunique = true and i.indpred is null and i.indexprs is null",
+                    [$physicalName]
+                );
+                $indexes = array_map(fn($row): array => explode(',', (string) $row->columns), $rows);
+            } elseif ('sqlite' === $driver) {
+                $indexes = [];
+                foreach (DB::select(sprintf('PRAGMA index_list(%s)', $physicalName)) as $index) {
+                    if (empty($index->unique)) {
+                        continue;
+                    }
+
+                    if (!empty($index->partial)) {
+                        continue;
+                    }
+
+                    $info = DB::select(sprintf('PRAGMA index_info(%s)', $index->name));
+                    $columns = array_map(fn($col): ?string => $col->name, $info);
+                    if (!in_array(null, $columns, true)) {
+                        $indexes[] = $columns;
+                    }
+                }
+            }
+        } catch (Exception $exception) {
+            Log::warning(sprintf('Failed to get unique indexes for table %s: ', $tableName) . $exception->getMessage());
+            $indexes = null;
+        }
+
+        return self::$uniqueIndexesCache[$tableName] = $indexes;
     }
 
     /**

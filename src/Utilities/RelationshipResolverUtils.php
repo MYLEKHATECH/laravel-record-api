@@ -22,6 +22,11 @@ use Mylekha\RecordApi\Services\RecordConfigService;
 
 class RelationshipResolverUtils
 {
+    /**
+     * PostgreSQL functions take at most 100 arguments: 50 key/value pairs per json_build_object() call.
+     */
+    private const PGSQL_JSON_OBJECT_MAX_PAIRS = 50;
+
     // Dynamic inference has been removed - all relationships must be statically defined
     // Cache resolved relationship configs per request to avoid expensive recomputation
     private static array $resolveCache = [];
@@ -1274,9 +1279,11 @@ class RelationshipResolverUtils
     }
 
     /**
-     * Build JSON_OBJECT column specification for subqueries.
+     * Build the key/value pairs of a JSON object for subqueries, one `'key', table.column` string per column.
+     *
+     * @return list<string>
      */
-    private static function buildJsonObjectColumns(array $columns, array $schemaColumns, string $tableName = ''): string
+    private static function buildJsonObjectColumns(array $columns, array $schemaColumns, string $tableName = ''): array
     {
         if ($columns === ['*'] || [] === $columns) {
             $columns = array_keys($schemaColumns);
@@ -1295,7 +1302,7 @@ class RelationshipResolverUtils
         if ([] === $validColumns) {
             $columnRef = $tableName !== '' && $tableName !== '0' ? sprintf('%s.id', $tableName) : 'id';
 
-            return "'id', " . $columnRef; // Fallback to id column
+            return ["'id', " . $columnRef]; // Fallback to id column
         }
 
         $jsonPairs = [];
@@ -1304,15 +1311,31 @@ class RelationshipResolverUtils
             $jsonPairs[] = sprintf("'%s', %s", $validColumn, $columnRef);
         }
 
-        return implode(', ', $jsonPairs);
+        return $jsonPairs;
     }
 
     /**
-     * Build database-specific JSON object expression from column specification.
+     * Build database-specific JSON object expression from key/value pairs.
+     *
+     * PostgreSQL functions take at most 100 arguments, so `json_build_object()` holds at most 50 pairs. Larger
+     * objects are built as several `jsonb_build_object()` chunks merged with `||` and cast back to `json`.
+     *
+     * @param list<string> $jsonPairs
      */
-    private static function buildJsonObjectExpression(string $jsonColumns): string
+    private static function buildJsonObjectExpression(array $jsonPairs): string
     {
         $driver = DB::getDriverName();
+
+        if ('pgsql' === $driver && count($jsonPairs) > self::PGSQL_JSON_OBJECT_MAX_PAIRS) {
+            $chunks = array_map(
+                fn(array $chunk): string => sprintf('jsonb_build_object(%s)', implode(', ', $chunk)),
+                array_chunk($jsonPairs, self::PGSQL_JSON_OBJECT_MAX_PAIRS)
+            );
+
+            return sprintf('(%s)::json', implode(' || ', $chunks));
+        }
+
+        $jsonColumns = implode(', ', $jsonPairs);
 
         return match ($driver) {
             'pgsql' => sprintf('json_build_object(%s)', $jsonColumns),
@@ -1323,8 +1346,10 @@ class RelationshipResolverUtils
 
     /**
      * Build database-specific JSON array aggregation expression of JSON objects.
+     *
+     * @param list<string> $jsonColumns
      */
-    private static function buildJsonArrayAggExpression(string $jsonColumns): string
+    private static function buildJsonArrayAggExpression(array $jsonColumns): string
     {
         $jsonObjectExpr = self::buildJsonObjectExpression($jsonColumns);
         $driver = DB::getDriverName();

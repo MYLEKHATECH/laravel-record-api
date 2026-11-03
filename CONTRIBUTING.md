@@ -38,6 +38,10 @@ Thank you for considering contributing to Record API! This document provides gui
 # Run all tests
 composer test
 
+# Run all tests on PostgreSQL (DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD
+# default to 127.0.0.1, 5432, record_api_testing, postgres, postgres; the database must exist)
+composer test:pgsql
+
 # Run specific test suites
 vendor/bin/phpunit tests/Unit
 vendor/bin/phpunit tests/Feature
